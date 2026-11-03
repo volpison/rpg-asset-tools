@@ -26,5 +26,5 @@ desktop.ini
 # Packaged builds
 *.zip
 
-# It won't be pushed yet
-.github/
+# Do you really think it's already safe to push it?
+# .github/
