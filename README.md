@@ -37,8 +37,8 @@ not been tried with the real window.
 ## Install and run
 
 ```bash
-git clone <this repository>
-cd <repository>/rpg_asset_tools
+git clone https://github.com/volpison/rpg-asset-tools.git
+cd rpg-asset-tools/rpg_asset_tools
 pip install -r requirements.txt
 python main.py
 ```
