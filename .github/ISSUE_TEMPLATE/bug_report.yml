@@ -1,0 +1,75 @@
+name: Bug report
+description: Something does not work, gives a wrong result, or freezes
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not attach project files you do not have the right to share.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the project
+        2. Health check -> Maps -> Run this check
+        3. ...
+    validations:
+      required: false
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      options:
+        - Asset list / rename / move / undo
+        - Health check - Duplicates
+        - Health check - Naming
+        - Health check - Plugin params
+        - Health check - Plugin files
+        - Health check - Database
+        - Health check - Maps
+        - Health check - Deploy size
+        - Start-up / dependency check
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: The release tag you downloaded, or the top entry of CHANGELOG.md.
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Operating system, Python version and PySide6 version. On Windows, the output of check_dependencies.bat has all three.
+      placeholder: Windows 11, Python 3.12, PySide6 6.12.0
+    validations:
+      required: true
+  - type: textarea
+    id: project
+    attributes:
+      label: About your project
+      description: Roughly how many assets, how large, how many plugins, and whether it was converted from RPG Maker MV.
+    validations:
+      required: false
+  - type: textarea
+    id: log
+    attributes:
+      label: Log or hang.log
+      description: |
+        If the window froze, paste or attach `~/.rpg_asset_tools/hang.log`
+        (Windows: `%USERPROFILE%\.rpg_asset_tools\hang.log`). Also paste any error text shown in the window or the console.
+      render: text
+    validations:
+      required: false
