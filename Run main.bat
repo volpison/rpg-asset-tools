@@ -1,0 +1,1 @@
+python rpg_asset_tools/main.py
