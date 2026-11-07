@@ -4,6 +4,8 @@ A desktop tool that finds unused and missing assets in an RPG Maker MZ project, 
 moves them **without breaking the project**. Every reference (event commands, database fields, plugin
 parameters, notes) is updated together with the file, and every change can be undone.
 
+![Main window screenshot](screenshots/MainWindow.png)
+
 It also has a Health check with seven on-demand reports: duplicate files, naming problems, plugin
 parameters and plugin files, unused database entries (including switches and variables), unreachable maps
 and stray files in `data/`, and a deploy-size summary.
@@ -25,6 +27,9 @@ Built for big projects: tested on a game with about 5,600 assets and 1.5 GB of d
   (`Town (Map001) > event 3 'Guard' at (12, 8) > page 2 > line 5: Show Picture`).
 - **Health check**: Duplicates, Naming, Plugin params, Plugin files, Database, Maps, Deploy size.
   Each tab runs only when you ask, so the window opens instantly.
+
+  ![Rename window screenshot](screenshots/Rename.png)
+  ![Health check window screenshot](screenshots/HealthCheck.png)
 
 ## Requirements
 
