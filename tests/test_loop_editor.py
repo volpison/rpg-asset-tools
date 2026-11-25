@@ -16,14 +16,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "rpg_asset_tools"))
 
-import numpy as np  # noqa: E402
+try:
+    import numpy as np
+except ImportError:                      # numpy is optional (only the loop editor's drawing/playing needs it)
+    np = None
 
 import audiodecode  # noqa: E402
 import loopmath  # noqa: E402
-import loopplayback  # noqa: E402
 import oggmeta  # noqa: E402
-import waveform  # noqa: E402
 
+if np is not None:
+    import loopplayback  # noqa: E402
+    import waveform  # noqa: E402
+
+needs_numpy = unittest.skipIf(np is None, "numpy is not installed")
 DATA = HERE / "data"
 
 
@@ -184,6 +190,7 @@ class TestLoopMath(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+@needs_numpy
 class TestWaveform(unittest.TestCase):
     def brute(self, s, start, end, width):
         n = s.shape[0]
@@ -261,8 +268,9 @@ class TestWaveform(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+@needs_numpy
 class TestLoopPlayback(unittest.TestCase):
-    ramp = np.arange(10, dtype=np.float32).reshape(10, 1)
+    ramp = np.arange(10, dtype=np.float32).reshape(10, 1) if np is not None else None
 
     def test_jump_is_exact_and_can_fall_in_the_middle_of_a_chunk(self):
         out, pos = loopplayback.render(self.ramp, 0, 25, 3, 7)
@@ -337,11 +345,12 @@ class TestAudioDecode(unittest.TestCase):
 
     def test_missing_package_gives_install_instructions(self):
         sys.modules["soundfile"] = None                     # makes `import soundfile` fail
-        self.assertEqual(audiodecode.missing_dependencies(), ["soundfile"])
+        self.assertIn("soundfile", audiodecode.missing_dependencies())
         with self.assertRaises(audiodecode.DecodeError) as cm:
             audiodecode.decode("x.ogg")
         self.assertIn(audiodecode.INSTALL_COMMAND, str(cm.exception))
 
+    @needs_numpy
     def test_decode_shapes_and_extra_channels(self):
         seen = {}
 
@@ -357,6 +366,7 @@ class TestAudioDecode(unittest.TestCase):
         self.assertTrue(got.samples.flags["C_CONTIGUOUS"])
         self.assertEqual((seen["dtype"], seen["always_2d"]), ("float32", True))
 
+    @needs_numpy
     def test_decoder_errors_become_plain_messages(self):
         def reader(path, dtype, always_2d):
             raise RuntimeError("Error opening 'a.ogg': Format not recognised.")
@@ -365,6 +375,7 @@ class TestAudioDecode(unittest.TestCase):
             audiodecode.decode("a.ogg")
         self.assertIn("could not be read", str(cm.exception))
 
+    @needs_numpy
     def test_real_decoder_agrees_with_ffmpeg(self):
         """Only runs where soundfile and ffmpeg are both installed."""
         sys.modules.pop("soundfile", None)
