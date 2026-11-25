@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 import batch_tools
 import usage
 from annotations import Annotations, PRESET_COLORS
-from asset_paths import ASSET_ROOTS, CATEGORY_LABELS, AUDIO_CATEGORIES
+from asset_paths import ASSET_ROOTS, CATEGORY_LABELS, AUDIO_CATEGORIES, LOOP_CATEGORIES
 from audio_preview import AudioPreviewDialog, resolve_audio_path
 from image_preview import (
     ImagePreviewDialog, ThumbnailLabel, is_image_path, resolve_preview_path,
@@ -580,10 +580,15 @@ class MainWindow(QMainWindow):
         self.btn_play = QPushButton("Play audio...")
         self.btn_play.clicked.connect(self.open_full_preview)
         self.btn_play.hide()
+        self.btn_loop = QPushButton("Loop editor...")
+        self.btn_loop.setToolTip("Show the waveform and the loop points (LOOPSTART / LOOPLENGTH) of this music.")
+        self.btn_loop.clicked.connect(self.open_loop_editor)
+        self.btn_loop.hide()
         rl.addWidget(self.d_title)
         rl.addWidget(self.d_help)
         rl.addWidget(self.thumb)
         rl.addWidget(self.btn_play)
+        rl.addWidget(self.btn_loop)
         rl.addWidget(QLabel("Used in:"))
         self.ref_list = QListWidget()
         rl.addWidget(self.ref_list, stretch=1)
@@ -855,6 +860,7 @@ class MainWindow(QMainWindow):
         try:
             self.ref_list.clear()
             self.btn_play.hide()
+            self.btn_loop.hide()
             self.thumb.hide()
             self.thumb.set_image(QPixmap())
             self._comment_target = None
@@ -897,6 +903,8 @@ class MainWindow(QMainWindow):
                 self.thumb.show()
             elif a["category"] in AUDIO_CATEGORIES and resolve_audio_path(self.game, a):
                 self.btn_play.show()
+                if a["category"] in LOOP_CATEGORIES:
+                    self.btn_loop.show()
         finally:
             self._loading_details = False
 
@@ -915,6 +923,27 @@ class MainWindow(QMainWindow):
             dlg = AudioPreviewDialog(aud, a["name"], self)
         self._previews = [d for d in self._previews if d.isVisible()] + [dlg]
         dlg.show()
+
+    def open_loop_editor(self):
+        sel = self._selected()
+        if len(sel) != 1 or not self.game or sel[0]["category"] not in LOOP_CATEGORIES:
+            return
+        a = sel[0]
+        aud = resolve_audio_path(self.game, a)
+        if not aud:
+            self.statusBar().showMessage("This asset has no audio file on disk.", 5000)
+            return
+        try:
+            from loop_editor_gui import open_loop_editor
+        except ImportError as e:                      # Qt's multimedia module is not installed
+            QMessageBox.information(
+                self, "Loop editor",
+                "The loop editor needs Qt's multimedia module, which this PySide6 install does not "
+                f"have ({e}).\n\nInstall the full package:   pip install PySide6")
+            return
+        dlg = open_loop_editor(aud, a["name"], self)
+        if dlg is not None:
+            self._previews = [d for d in self._previews if d.isVisible()] + [dlg]
 
     # ----------------------------------------------------------- notes/color
     def _comment_changed(self):
@@ -1207,6 +1236,8 @@ class MainWindow(QMainWindow):
         menu.addAction("Rename...  (F2)").triggered.connect(self.rename_selected)
         if len(sel) == 1:
             menu.addAction("Where is this used?  (Ctrl+U)").triggered.connect(self.show_usage)
+            if sel[0]["category"] in LOOP_CATEGORIES and resolve_audio_path(self.game, sel[0]):
+                menu.addAction("Loop editor...").triggered.connect(self.open_loop_editor)
         if any(a["status"] == "unused" for a in sel):
             menu.addAction("Move unused to _unused/...").triggered.connect(self.move_unused)
         keep_all = all(a["ignored"] for a in sel)

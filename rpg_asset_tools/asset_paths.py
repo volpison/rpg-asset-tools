@@ -48,6 +48,7 @@ ASSET_ROOTS: dict[str, tuple[Path, tuple[str, ...]]] = {
 }
 
 AUDIO_CATEGORIES = ("bgm", "bgs", "me", "se")
+LOOP_CATEGORIES = ("bgm", "bgs")      # the sounds the game repeats (ME and SE play once)
 UNUSED_DIR_NAME = "_unused"            # the leading underscore keeps it at the top and noticeable
 LEGACY_UNUSED_DIR_NAMES = ("unused",)   # created by older versions: still recognised everywhere
 ALL_UNUSED_DIR_NAMES = (UNUSED_DIR_NAME,) + LEGACY_UNUSED_DIR_NAMES

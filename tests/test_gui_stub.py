@@ -654,3 +654,37 @@ class TestSafetyMessages(WindowBase):
         c("CANNOT UNDO: x was modified after the operation")
         self.assertIn("CANNOT UNDO", c.reasons())
         self.assertNotIn("fine", c.reasons())
+
+
+class TestLoopEditorEntry(WindowBase):
+    """The "Loop editor..." button and menu entry (the editor window itself is covered by the
+    pure-module tests and by the real-window smoke test)."""
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def show(self):
+            self.calls.append("show")
+
+        def hide(self):
+            self.calls.append("hide")
+
+    def test_button_only_for_looping_music(self):
+        w = self.w
+        w.btn_loop = self.Recorder()
+        self.select("Theme")                                   # a BGM
+        self.assertEqual(w.btn_loop.calls[-1], "show")
+        w.btn_loop.calls.clear()
+        self.select("Hit")                                     # a sound effect: plays once
+        self.assertNotIn("show", w.btn_loop.calls)
+        w.btn_loop.calls.clear()
+        self.select("Pic1")                                    # a picture
+        self.assertNotIn("show", w.btn_loop.calls)
+
+    def test_opening_for_a_sound_effect_does_nothing(self):
+        QMessageBox.shown = []
+        self.select("Hit")
+        self.w.open_loop_editor()
+        self.assertEqual(QMessageBox.shown, [])
+        self.assertEqual(self.w._previews, [])

@@ -358,6 +358,72 @@ def main() -> int:
         if not read_only:
             assert empties, "the fake project has empty tabs (Naming, Plugin files): none was explained"
 
+    with step("loop editor opens, draws and plays") as s:
+        import audiodecode
+        missing = audiodecode.missing_dependencies()
+        if missing:
+            s.note = ("SKIPPED: " + " and ".join(missing)
+                      + " not installed (python -m pip install -r requirements-audio.txt)")
+        else:
+            import numpy as np
+            import soundfile
+            import loop_editor_gui
+
+            def open_and_wait(path, title):
+                d = loop_editor_gui.open_loop_editor(path, title, win)
+                assert d is not None, f"the loop editor refused {path.name}"
+                t0 = time.monotonic()
+                while not (d.ready or d.error):
+                    APP.processEvents()
+                    time.sleep(0.01)
+                    if time.monotonic() - t0 > 30:
+                        raise TimeoutError("decoding did not finish within 30 s")
+                assert not d.error, d.error
+                pump()
+                return d
+
+            def painted_colours(d):
+                img = d.view.grab().toImage()
+                return len({img.pixelColor(x, y).rgb()
+                            for x in range(0, img.width(), 5) for y in range(0, img.height(), 5)})
+
+            tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(44100 * 3) / 44100.0)).astype("float32")
+            ogg = tmp / "loop_smoke_tone.ogg"
+            soundfile.write(str(ogg), np.column_stack([tone, tone]), 44100, format="OGG", subtype="VORBIS")
+            dlg = open_and_wait(ogg, "Smoke tone")
+            assert dlg._audio.frames > 100000 and dlg._audio.sample_rate == 44100, dlg._audio.frames
+            assert dlg._loop.status == "none", dlg._loop.status
+            assert painted_colours(dlg) > 3, "the waveform view is blank"
+            dlg.view.zoom(0.05)                      # far in: the single-sample drawing path
+            dlg.view.set_view(1000, 40)
+            pump()
+            assert painted_colours(dlg) > 3, "zoomed waveform is blank"
+            dlg.view.fit()
+            played = "playback not tested (no sound output device)"
+            if dlg.play(0):
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 0.5:
+                    APP.processEvents()
+                    time.sleep(0.01)
+                assert dlg.is_playing(), "playback stopped by itself"
+                assert dlg._head > 0, "the play cursor did not move"
+                played = f"played 0.5 s, cursor at sample {dlg._head}"
+                dlg.play_seam()
+                pump()
+                dlg.stop()
+            dlg.close()
+            notes = [played]
+            tagged = HERE.parent / "tests" / "data" / "loop_tagged.ogg"
+            if tagged.is_file():                     # a file with real loop tags (present in a git checkout)
+                d2 = open_and_wait(tagged, "Tagged")
+                lp = d2._loop
+                assert (lp.start, lp.end, lp.status) == (22050, 66150, "complete"), lp
+                assert d2._tags.start == 22050 and d2._tags.length == 44100
+                assert painted_colours(d2) > 3
+                d2.close()
+                notes.append("tags read: LOOPSTART 22050, LOOPLENGTH 44100")
+            s.note = "; ".join(notes)
+
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
         if not read_only and pool["n"] == 0:

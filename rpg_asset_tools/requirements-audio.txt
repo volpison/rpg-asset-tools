@@ -1,0 +1,3 @@
+# Optional: only the loop editor needs these.
+numpy>=1.23
+soundfile>=0.12
