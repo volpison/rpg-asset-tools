@@ -155,6 +155,13 @@ class WaveformView(QWidget):
         self._message = "Reading the sound..."
 
     # ----- data
+    def release(self) -> None:
+        """Drop the waveform data (the window is closed)."""
+        self._pyr = None
+        self._loop = None
+        self._cursor = None
+        self.update()
+
     def set_message(self, text: str) -> None:
         self._message = text
         self.update()
@@ -386,6 +393,7 @@ class LoopEditorDialog(QDialog):
         self._io = None
         self._dev = None                  # the _Feeder of the current play run
         self._sink_error = ""
+        self._run_loop = (0, None)        # loop settings of the current play run
         self._origin = 0                  # where the current play run started
         self._head = 0                    # where the cursor is while stopped or paused
         self._shut = False
@@ -617,13 +625,12 @@ class LoopEditorDialog(QDialog):
         self._sink.setBufferSize(int(audio.sample_rate * audio.channels * 2 * 0.4))     # about 0.4 s
         self._dev = _Feeder(audio.samples)
         ls, le = self._loop_args()
+        self._run_loop = (ls, le)          # the settings this run really plays with
         self._dev.configure(pos, ls, le)
         self._origin = pos
         self._io = self._sink.start()
-        if self._io is None:
-            self._sink_error = f"the sound device did not start (state {self._sink.state().name})"
-            self._say("The sound device could not be started. " + self._sink_error)
-            self._stop_sink()
+        if self._io is None or self._sink.state() == QAudio.State.StoppedState:
+            self._sink_failed("the sound device did not start")
             return False
         self._sink_error = ""
         self._feed()
@@ -632,6 +639,14 @@ class LoopEditorDialog(QDialog):
                   "This window only shows and plays; it does not change the file.")
         self.btn_play.setText("Pause")
         return True
+
+    def _sink_failed(self, what: str) -> None:
+        """Say why playing failed (the error is read before the sink is thrown away)."""
+        err = self._sink.error().name if self._sink is not None else "?"
+        self._sink_error = f"{what} (error: {err})"
+        self._stop_sink()
+        self._say("Playing stopped: " + self._sink_error + ". Check the sound device in the system "
+                  "settings and press Play again.")
 
     def _stop_sink(self) -> None:
         self._timer.stop()
@@ -650,11 +665,16 @@ class LoopEditorDialog(QDialog):
         _, loopplayback = _np()
         rate = self._audio.sample_rate
         played = int(self._sink.processedUSecs() * rate / 1_000_000)
-        ls, le = self._loop_args()
+        ls, le = self._run_loop
         return loopplayback.advance(self._origin, played, self._audio.frames, ls, le)
 
     def _tick(self) -> None:
         if self._sink is None:
+            return
+        if self._sink.state() == QAudio.State.StoppedState:       # the device gave up while playing
+            self._head = min(self._current_head(), self._audio.frames - 1)
+            self._sink_failed("the sound device stopped")
+            self.view.set_cursor(self._head)
             return
         self._feed()
         if self._dev.finished and not self._dev._pending and self._sink.state() == QAudio.State.IdleState:
@@ -698,7 +718,7 @@ class LoopEditorDialog(QDialog):
             return
         if self._sink is not None:
             self._stop_sink()
-            self._head = self._origin
+        self._head = self._origin                              # also after a pause: back to where it started
         self.view.set_cursor(self._head)
         self._vals["cursor"].setText(self._fmt_pos(self._head))
 
@@ -737,8 +757,11 @@ class LoopEditorDialog(QDialog):
 
     # ----- closing
     def _shutdown(self) -> None:
-        self._shut = True
+        self._shut = True                 # a late decode result is ignored from now on
         self._stop_sink()
+        self.ready = False
+        self._audio = None                # a closed window is only hidden; do not keep the song in memory
+        self.view.release()
 
     def done(self, result: int) -> None:
         self._shutdown()

@@ -147,7 +147,11 @@ def loop_tags(info: OggInfo) -> LoopTags:
             notes.append(f"{key} is stored as '{name}' (not in upper case).")
         text = value.strip()
         if text.isascii() and text.isdigit():
-            found[key] = int(text)
+            try:
+                found[key] = int(text)
+            except ValueError:                   # Python limits very long digit strings
+                notes.append(f"{key} has a number with {len(text)} digits, which is not a real "
+                             "sample position; it is ignored.")
         else:
             notes.append(f"{key} has the value '{value}', which is not a whole number; it is ignored.")
     return LoopTags(found["LOOPSTART"], found["LOOPLENGTH"], tuple(notes))

@@ -211,10 +211,11 @@ Ogg Opus file gets an explanation instead.
 **One-time setup:** the loop editor needs two small extra packages, which the rest of the app does not:
 
 ```
-python -m pip install -r requirements-audio.txt
+python -m pip install numpy soundfile
 ```
 
-(or `pip install numpy soundfile`). Without them the button explains what to install.
+(the same two packages are listed in `rpg_asset_tools/requirements-audio.txt`). Without them the button
+explains what to install.
 
 **What you see**
 

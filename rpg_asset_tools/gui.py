@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 import batch_tools
 import usage
 from annotations import Annotations, PRESET_COLORS
-from asset_paths import ASSET_ROOTS, CATEGORY_LABELS, AUDIO_CATEGORIES, LOOP_CATEGORIES
+from asset_paths import ASSET_ROOTS, CATEGORY_LABELS, AUDIO_CATEGORIES, LOOP_CATEGORIES, resolve_ogg_path
 from audio_preview import AudioPreviewDialog, resolve_audio_path
 from image_preview import (
     ImagePreviewDialog, ThumbnailLabel, is_image_path, resolve_preview_path,
@@ -929,7 +929,7 @@ class MainWindow(QMainWindow):
         if len(sel) != 1 or not self.game or sel[0]["category"] not in LOOP_CATEGORIES:
             return
         a = sel[0]
-        aud = resolve_audio_path(self.game, a)
+        aud = resolve_ogg_path(self.game, a) or resolve_audio_path(self.game, a)
         if not aud:
             self.statusBar().showMessage("This asset has no audio file on disk.", 5000)
             return

@@ -400,8 +400,11 @@ def main() -> int:
             pump()
             assert painted_colours(dlg) > 3, "zoomed waveform is blank"
             dlg.view.fit()
+            from PySide6.QtMultimedia import QMediaDevices
+            has_device = not QMediaDevices.defaultAudioOutput().isNull()
             played = "playback not tested (no sound output device)"
-            if dlg.play(0):
+            if has_device:
+                assert dlg.play(0), "playback did not start: " + dlg.hint.text()
                 t0 = time.monotonic()
                 while time.monotonic() - t0 < 0.5:
                     APP.processEvents()

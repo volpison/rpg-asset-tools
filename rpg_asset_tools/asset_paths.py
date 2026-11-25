@@ -132,3 +132,19 @@ def files_for(game_folder: Path, category: str, name: str) -> list[Path]:
 def dest_for(game_folder: Path, category: str, src: Path, new_name: str) -> Path:
     folder_rel, _ = ASSET_ROOTS[category]
     return Path(game_folder) / folder_rel / (normalize_name(new_name) + src.suffix)
+
+
+def resolve_ogg_path(game_folder, asset: dict) -> Path | None:
+    """The existing .ogg file of an audio asset, even when an .m4a twin is listed first.
+    The loop editor only opens Ogg Vorbis. None when there is no .ogg on disk."""
+    if not game_folder or not asset:
+        return None
+    names = list(asset.get("files") or [])
+    if asset.get("path"):
+        names.append(asset["path"])
+    for rel in names:
+        if str(rel).lower().endswith(".ogg"):
+            p = Path(game_folder) / rel
+            if p.is_file():
+                return p
+    return None

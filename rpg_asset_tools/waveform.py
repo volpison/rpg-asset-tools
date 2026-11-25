@@ -66,8 +66,10 @@ def _reduce(lo: np.ndarray, hi: np.ndarray, k: int) -> tuple[np.ndarray, np.ndar
     return out_lo, out_hi
 
 
-def _folded(pyr: Pyramid) -> tuple[np.ndarray, np.ndarray]:
-    s = pyr.samples
+def _folded(pyr: Pyramid, a: int = 0, b: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frame min and max over the channels for frames [a, b) only (so a repaint costs what the
+    viewport shows, not the length of the recording)."""
+    s = pyr.samples[a:b]
     if s.shape[1] == 1:
         return s[:, 0], s[:, 0]
     return s.min(axis=1), s.max(axis=1)
@@ -88,23 +90,30 @@ def peaks(pyr: Pyramid, start: float, end: float, width: int) -> tuple[np.ndarra
     edges = start + spp * np.arange(width + 1)
 
     if spp < 1:                                                   # deep zoom: one sample per column
-        lo_src, hi_src = _folded(pyr)
         at = np.floor(edges[:-1]).astype(np.int64)
         ok = (at >= 0) & (at < total)
-        out_lo[ok] = lo_src[at[ok]]
-        out_hi[ok] = hi_src[at[ok]]
+        if not ok.any():
+            return out_lo, out_hi
+        a, b = int(at[ok].min()), int(at[ok].max()) + 1
+        lo_src, hi_src = _folded(pyr, a, b)
+        out_lo[ok] = lo_src[at[ok] - a]
+        out_hi[ok] = hi_src[at[ok] - a]
         return out_lo, out_hi
 
     if spp < BASE:                                                # raw samples
-        src_lo, src_hi = _folded(pyr)
+        off = max(0, int(np.floor(start)))                        # only the frames on screen
+        src_lo, src_hi = _folded(pyr, off, min(total, int(np.ceil(end)) + 1))
         size = 1
     else:                                                         # coarsest level that is still fine enough
         level = max(i for i, s in enumerate(pyr.sizes) if s <= spp)
         size = pyr.sizes[level]
         src_lo, src_hi = pyr.mins[level], pyr.maxs[level]
+        off = 0
 
     limit = len(src_lo)
-    ec = np.clip(np.floor(edges / size).astype(np.int64), 0, limit)
+    ec = np.floor(edges / size).astype(np.int64) - off
+    ec[-1] = int(np.ceil(edges[-1] / size)) - off                 # the last bucket may be a partial one
+    ec = np.clip(ec, 0, limit)
     nonempty = np.flatnonzero(ec[1:] > ec[:-1])
     if len(nonempty) == 0:
         return out_lo, out_hi

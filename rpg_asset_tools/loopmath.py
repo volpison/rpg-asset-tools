@@ -97,7 +97,7 @@ def format_time(frames: int, rate: int) -> str:
     """m:ss.mmm for a sample position, e.g. 66150 samples at 44100 Hz -> 0:01.500."""
     if rate <= 0:
         return "0:00.000"
-    ms = round(abs(frames) * 1000 / rate)
+    ms = (abs(frames) * 1000 + rate // 2) // rate             # integers only: huge tag values must not overflow
     sign = "-" if frames < 0 else ""
     return f"{sign}{ms // 60000}:{ms // 1000 % 60:02d}.{ms % 1000:03d}"
 

@@ -682,6 +682,15 @@ class TestLoopEditorEntry(WindowBase):
         self.select("Pic1")                                    # a picture
         self.assertNotIn("show", w.btn_loop.calls)
 
+    def test_the_ogg_is_chosen_when_an_m4a_twin_exists(self):
+        import asset_paths
+        a = next(x for x in self.w.shown if x["name"] == "Theme" and x["category"] == "bgm")
+        a = dict(a, files=sorted(a["files"], reverse=True), path=a["files"][0])   # m4a first
+        p = asset_paths.resolve_ogg_path(self.game, a)
+        self.assertEqual(p.suffix, ".ogg")
+        self.assertTrue(p.is_file())
+        self.assertIsNone(asset_paths.resolve_ogg_path(self.game, {"files": ["audio/bgm/Theme.m4a"]}))
+
     def test_opening_for_a_sound_effect_does_nothing(self):
         QMessageBox.shown = []
         self.select("Hit")

@@ -114,6 +114,9 @@ class TestOggMeta(unittest.TestCase):
     def test_loop_tags_odd_values(self):
         def tags(*pairs):
             return oggmeta.loop_tags(oggmeta.OggInfo(44100, 2, "v", tuple(pairs)))
+        t = tags(("LOOPSTART", "9" * 5000))                 # beyond Python's digit limit: no crash
+        self.assertIsNone(t.start)
+        self.assertTrue(t.notes)
         t = tags(("LOOPSTART", "abc"), ("LOOPLENGTH", "-5"))
         self.assertEqual((t.start, t.length), (None, None))
         self.assertEqual(len(t.notes), 2)
@@ -262,6 +265,9 @@ class TestLoopMath(unittest.TestCase):
         self.assertEqual(loopmath.format_time(-22050, 44100), "-0:00.500")
         self.assertEqual(loopmath.format_time(5, 0), "0:00.000")
 
+    def test_format_time_with_a_huge_value_does_not_overflow(self):
+        self.assertIn(":", loopmath.format_time(10 ** 400, 44100))
+
     def test_seconds(self):
         self.assertAlmostEqual(loopmath.frames_to_seconds(132300, 44100), 3.0)
         self.assertEqual(loopmath.frames_to_seconds(5, 0), 0.0)
@@ -332,6 +338,28 @@ class TestWaveform(unittest.TestCase):
         self.assertFalse(np.isnan(lo).any() or np.isnan(hi).any())
         col = int(np.argmax(hi))                       # the spike is in (or next to) the right column
         self.assertLessEqual(abs(col - 123_456 * 500 // n), 1)
+
+    def test_spike_in_the_last_partial_bucket_is_drawn(self):
+        s = np.zeros((1000, 1), np.float32)
+        s[999] = 1.0
+        pyr = waveform.build_pyramid(s)
+        lo, hi = waveform.peaks(pyr, 0, 1000, 10)            # 100 samples per column: level of 64
+        self.assertEqual(hi[-1], 1.0)
+        self.assertEqual(hi[:-1].max(), 0.0)
+
+    def test_repaint_only_folds_what_is_on_screen(self):
+        s = np.random.default_rng(2).standard_normal((200_000, 2)).astype(np.float32)
+        pyr = waveform.build_pyramid(s)
+        calls = []
+        real = waveform._folded
+        waveform._folded = lambda p, a=0, b=None: (calls.append((a, b)), real(p, a, b))[1]
+        try:
+            waveform.peaks(pyr, 100_000, 100_400, 100)         # 4 samples per column
+            waveform.peaks(pyr, 150_000, 150_050, 100)         # deep zoom
+        finally:
+            waveform._folded = real
+        for a, b in calls:
+            self.assertLess(b - a, 1000)
 
     def test_peaks_outside_audio_are_zero(self):
         s = np.ones((1000, 1), np.float32)
