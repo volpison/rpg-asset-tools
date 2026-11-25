@@ -6,11 +6,12 @@
 4. [Plugins are real references](#plugins-are-real-references)
 5. [Galv's Layer Graphics](#galvs-layer-graphics-imglayers)
 6. [Where is this used?](#where-is-this-used-ctrlu)
-7. [Safety, backups and Undo](#safety-backups-and-undo)
-8. [Where things are stored](#where-things-are-stored)
-9. [What it cannot see](#what-it-cannot-see)
-10. [Speed on big projects](#speed-on-big-projects)
-11. [Troubleshooting](#troubleshooting)
+7. [Loop editor](#loop-editor-bgm-and-bgs)
+8. [Safety, backups and Undo](#safety-backups-and-undo)
+9. [Where things are stored](#where-things-are-stored)
+10. [What it cannot see](#what-it-cannot-see)
+11. [Speed on big projects](#speed-on-big-projects)
+12. [Troubleshooting](#troubleshooting)
 
 ## Getting started
 
@@ -191,6 +192,52 @@ events, database files, plugin parameters and plugin files are named too. *Copy 
 puts the paths on the clipboard; *Show file in folder* opens the file's folder. RPG Maker cannot be
 told to jump to a spot, so the map name, event position, page and line are the closest thing to a link.
 Free-text mentions of a name (notes, scripts) are listed as *possible* uses with the file / event they are in.
+
+## Loop editor (BGM and BGS)
+
+Music in RPG Maker MZ is Ogg Vorbis (`.ogg`). A file can carry two tags, **LOOPSTART** and
+**LOOPLENGTH**. When both are in the file, the game repeats that part of the song instead of the whole
+file. Both numbers are counted in **samples** of the file itself (at 44100 Hz, 3 seconds is sample 132300;
+other files may use 48000 Hz or 22050 Hz, and the editor reads the real rate). The loop ends at
+LOOPSTART + LOOPLENGTH and then jumps back to LOOPSTART.
+
+The loop editor shows these numbers on the waveform and lets you listen to them. **This version only views
+and plays: it never changes the file.** Editing the numbers and saving them back is planned.
+
+**Open it:** select one BGM or BGS row, then press *Loop editor...* in the details panel, or right-click
+the row. (ME and SE play once, so they have no loop editor.) Only `.ogg` files open; an `.m4a` file or an
+Ogg Opus file gets an explanation instead.
+
+**One-time setup:** the loop editor needs two small extra packages, which the rest of the app does not:
+
+```
+python -m pip install -r requirements-audio.txt
+```
+
+(or `pip install numpy soundfile`). Without them the button explains what to install.
+
+**What you see**
+
+* The waveform, with a time ruler. **Mouse wheel** zooms, **Shift + wheel** or the scroll bar moves, a **click**
+  moves the cursor. Zoom in far enough and you see single samples.
+* An orange bar above the wave from the loop start to the loop end, labelled with LOOPSTART and LOOPLENGTH.
+  A grey bar means the file has no loop tags, so the whole file repeats.
+* Below the wave: LOOPSTART and LOOPLENGTH exactly as stored in the file, where the loop plays from and to,
+  the file length, the cursor and the sample under the mouse, each in samples and as minutes:seconds.
+* Remarks in plain words when something looks unusual (tag names in lower case, a value that is not a whole
+  number, a loop that ends after the end of the file, LOOPSTART without LOOPLENGTH, and so on).
+
+**Listening**
+
+* *Play / Pause* plays from the cursor. *Stop* returns the cursor to where playing started.
+* *Loop like the game* (on by default) jumps from the loop end back to the loop start, exactly on the sample.
+  Turn it off to play the file once.
+* *From loop start* starts at the loop start. *Hear the seam* starts 3 seconds before the loop end so you
+  hear the jump itself: a click or a rhythm slip at the jump means the loop points are not right.
+
+**Good to know:** the editor shows what is stored in the file. How the game treats a file that has only
+LOOPSTART, or tag names written in lower case, has not yet been checked against the engine's own script
+(`js/rmmz_core.js`); until then, keep both tags present and in upper case.
 
 ## Safety, backups and Undo
 
