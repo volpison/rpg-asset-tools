@@ -59,6 +59,9 @@ def resolve_loop(engine: EngineTags, total: int, standard: LoopTags | None = Non
     if standard is not None and standard.start is None:
         status = LENGTH_ONLY
         notes.append("LOOPSTART is missing; the loop starts at sample 0.")
+    if start < 0:
+        notes.append(f"LOOPSTART ({start}) is negative; the whole file is shown.")
+        return LoopView(*whole, INVALID, tuple(notes))
     if start >= total:
         notes.append(f"LOOPSTART ({start}) is beyond the end of the file ({total} samples); "
                      "the whole file is shown.")

@@ -39,7 +39,15 @@ class EngineTags:
 def _js_parse_int(text: str) -> int | None:
     """JavaScript parseInt(text): leading digits only, None (NaN) when there are none."""
     m = re.match(r"\s*([+-]?[0-9]+)", text)
-    return int(m.group(1)) if m else None
+    return _to_int(m.group(1)) if m else None
+
+
+def _to_int(digits: str) -> int | None:
+    """int(), but a number too long for Python's digit limit counts as unusable (None)."""
+    try:
+        return int(digits)
+    except ValueError:
+        return None
 
 
 def read_engine_tags(data: bytes) -> EngineTags:
@@ -67,10 +75,10 @@ def read_engine_tags(data: bytes) -> EngineTags:
                     i += 1
                 m = re.search(r"LOOPSTART=([0-9]+)", text)
                 if m:
-                    state["start"] = int(m.group(1))
+                    state["start"] = _to_int(m.group(1))
                 m = re.search(r"LOOPLENGTH=([0-9]+)", text)
                 if m:
-                    state["length"] = int(m.group(1))
+                    state["length"] = _to_int(m.group(1))
                 if text in ("LOOPSTART", "LOOPLENGTH"):
                     text2 = ""
                     i += 16

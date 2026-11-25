@@ -201,6 +201,11 @@ class TestEngineTags(unittest.TestCase):
         el = enginetags.engine_loop(t, 5000)
         self.assertEqual((el.start, el.length, el.from_tags), (0, 700, True))
 
+    def test_huge_number_is_unusable_not_a_crash(self):
+        t = enginetags.read_engine_tags(ogg_header([b"LOOPSTART=" + b"9" * 5000, b"LOOPLENGTH=20"]))
+        self.assertIsNone(t.loop_start)
+        self.assertFalse(enginetags.engine_loop(t, 1000).from_tags)
+
     def test_truncated_data_does_not_crash(self):
         data = ogg_header([b"LOOPSTART=100", b"LOOPLENGTH=2000"])
         for cut in range(0, len(data), 7):
@@ -243,6 +248,10 @@ class TestLoopMath(unittest.TestCase):
         self.assertEqual((v.start, v.end, v.status), (900, 1000, loopmath.INVALID))
         v = self.view(1000, 5)                       # start exactly at the end: nothing to loop
         self.assertEqual(v.status, loopmath.INVALID)
+
+    def test_negative_start_is_invalid(self):
+        v = loopmath.resolve_loop(enginetags.EngineTags(44100, -5, 100), 1000)
+        self.assertEqual((v.start, v.end, v.status), (0, 1000, loopmath.INVALID))
 
     def test_game_and_standard_disagree(self):
         eng = enginetags.EngineTags(44100, 0, 0)     # the game finds nothing...
