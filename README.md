@@ -27,6 +27,8 @@ Built for big projects: tested on a game with about 5,600 assets and 1.5 GB of d
   (`Town (Map001) > event 3 'Guard' at (12, 8) > page 2 > line 5: Show Picture`).
 - **Health check**: Duplicates, Naming, Plugin params, Plugin files, Database, Maps, Deploy size.
   Each tab runs only when you ask, so the window opens instantly.
+- **Loop editor** (optional, music in Ogg Vorbis): shows the waveform and the loop stored in the file's
+  `LOOPSTART` / `LOOPLENGTH` tags, and plays it looping the way the game does. View and listen only for now.
 
   ![Rename window screenshot](screenshots/Rename.png)
   ![Health check window screenshot](screenshots/HealthCheck.png)
@@ -34,7 +36,9 @@ Built for big projects: tested on a game with about 5,600 assets and 1.5 GB of d
 ## Requirements
 
 - Python 3.9 or newer, 64-bit
-- [PySide6](https://pypi.org/project/PySide6/) 6.5 or newer (installed with pip; it is the only dependency)
+- [PySide6](https://pypi.org/project/PySide6/) 6.5 or newer (installed with pip; the only required package)
+- Optional, for the loop editor only: numpy and soundfile
+  (`pip install -r rpg_asset_tools/requirements-audio.txt`). Everything else works without them.
 
 Developed and tested on Windows with Python 3.12 and PySide6 6.12. Linux and macOS should work but have
 not been tried with the real window.

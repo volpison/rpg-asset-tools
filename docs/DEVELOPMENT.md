@@ -35,6 +35,13 @@ call into them. Keep it that way: it is what makes most of the app testable with
 | `duplicates.py`, `lint.py`, `deploy.py` | Duplicates, Naming and Deploy size checks |
 | `health.py` | `SECTIONS`, `run_section`, `HealthReport`: runs one Health tab at a time |
 | `health_gui.py`, `gui.py` | windows |
+| `oggmeta.py` | reads an Ogg Vorbis header: sample rate, channels, comment tags, `loop_tags()` (pure Python, read-only) |
+| `enginetags.py` | what RPG Maker MZ's own reader finds in an .ogg (port of `_readLoopComments` / `_readMetaData` / `_onDecode`), read-only |
+| `loopmath.py` | which loop is shown/played for the tags found, time formatting, ruler steps |
+| `waveform.py` | min/max pyramid for drawing any zoom level quickly (numpy) |
+| `loopplayback.py` | which samples come next, the exact loop jump, cursor position (numpy) |
+| `audiodecode.py` | the one place that decodes audio (optional numpy + soundfile; clear message when missing) |
+| `loop_editor_gui.py` | the loop editor window: `WaveformView`, `LoopEditorDialog`, `open_loop_editor()` |
 | `fit_table.py` | `FitTable`: fitted, resizable, reorderable columns with an empty-state overlay |
 | `filecache.py`, `filefacts.py`, `parallel.py` | per-file caches, cached file hashes / PNG sizes, process pool and `threaded_map` |
 | `watchdog.py` | hang log |
@@ -97,6 +104,40 @@ always safe.
 window. If the UI thread stops for about 8 seconds, every thread's stack goes to
 `~/.rpg_asset_tools/hang.log`. Set `RPGAT_NO_WATCHDOG=1` to disable it (the tests do).
 
+## Decisions
+
+**Loop editor: optional numpy + soundfile for decoding.** `audio_preview.py` already notes that QtMultimedia
+often cannot decode `.ogg` on Windows, and the editor needs exact sample counts. soundfile (libsndfile) and
+numpy are permissively licensed, and the app starts and works without them (`audiodecode.missing_dependencies()`,
+`requirements-audio.txt`). Left out: decoding through `QAudioDecoder` (codec availability varies by machine).
+
+**Loop editor: our own Ogg reader instead of mutagen.** mutagen is GPL; this project is MIT. `oggmeta.py` is a
+small pure-Python reader. The writer for step 2 will follow the same rule and must be tested by comparing the
+decoded audio before and after.
+
+**Loop editor: playback through `QAudioSink` fed by our own PCM**, not `QMediaPlayer`. The jump from loop end
+to loop start is then exact to the sample, and the later metronome can be mixed into the same buffer so it
+stays in time. Left out: `QMediaPlayer` (cannot loop on a sample).
+
+**Loop editor: engine rules come from `js/rmmz_core.js` (MZ 1.0.0).** `enginetags.py` is a faithful port of
+the engine's byte scan, quirks included, because the editor must show what the game will play. Rules found:
+upper-case names only; each Ogg page scanned alone and a comment block that spans pages is skipped (its size
+becomes NaN); tag text runs to the next zero byte, so a following comment of 48 to 57 bytes puts a digit
+into the number; LOOPSTART without LOOPLENGTH is ignored (whole file loops); LOOPLENGTH without LOOPSTART
+starts at 0. **Constraints for the step-2 writer:** write both tags in upper case, keep them in the first
+Ogg page of the comment block, avoid the digit quirk, and verify by running `enginetags` on the written file.
+Only MZ 1.0.0 was checked; newer builds of `rmmz_core.js` should be compared.
+
+**Loop editor: playback is push mode.** A `QIODevice` subclass pulled by the sink failed on Windows (playback
+stopped at once), so `_Feeder` writes into the device from a 10 ms timer. `playback_report()` prints state,
+error and byte counts for bug reports.
+
+## Ideas for later
+
+* **Seam view:** an option to show, at the end of the loop, the waveform of the loop's beginning (after the
+  loop-start marker) instead of the file's real "outro", so the join can be judged by eye. (Requested by the user.)
+* Loop editor steps 2 to 4: edit and write the tags (backup + Undo), BPM grid and metronome, loop suggestions.
+
 ## Conventions
 
 * New project-wide checks go through `health.SECTIONS` / `run_section`, so they run on demand and show up
@@ -105,3 +146,4 @@ window. If the UI thread stops for about 8 seconds, every thread's stack goes to
   Undo). Do not write project files from GUI code.
 * Pure logic gets a unit test in `tests/`; anything that touches real Qt behaviour gets a step in
   `smoke_test_qt.py`.
+* Test audio lives in `tests/data/` (see its README for how the files were made).

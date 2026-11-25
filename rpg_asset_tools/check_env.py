@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CORE_MODULES = [
     "asset_paths", "system_defaults", "refs", "plugin_refs", "jsonio", "scanner",
     "annotations", "history", "index", "rename_engine", "duplicates", "lint",
-    "deploy", "health", "batch_tools",
+    "deploy", "health", "batch_tools", "oggmeta", "enginetags", "loopmath", "audiodecode",
 ]
 # Modules that import PySide6
 GUI_MODULES = ["image_preview", "audio_preview", "health_gui", "gui"]
@@ -89,6 +89,21 @@ def main() -> int:
         line("OK", f"{len(CORE_MODULES)} core modules import cleanly"
                    + (f", {len(GUI_MODULES)} window modules too" if qt_ok else
                       " (window modules skipped: PySide6 missing)"))
+
+    print("\nLoop editor (optional: needs numpy and soundfile)")
+    import audiodecode
+    absent = audiodecode.missing_dependencies()
+    if absent:
+        line("INFO", "not installed: " + ", ".join(absent) + " - the rest of the app works without it")
+        line("INFO", "to use the loop editor:  python -m pip install -r requirements-audio.txt")
+    else:
+        line("OK", "numpy and soundfile are installed")
+        if qt_ok:
+            try:
+                importlib.import_module("loop_editor_gui")
+                line("OK", "the loop editor window loads")
+            except Exception as e:  # noqa: BLE001
+                line("WARN", f"the loop editor window does not load: {type(e).__name__}: {e}")
 
     print()
     if code == 0:

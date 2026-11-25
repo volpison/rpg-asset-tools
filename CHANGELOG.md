@@ -6,6 +6,14 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Loop editor, step 1 (view and listen): for BGM and BGS in Ogg Vorbis. Shows the waveform and the loop
+  stored in the `LOOPSTART` / `LOOPLENGTH` tags, with zoom down to single samples, and plays the music looping
+  like the game, with a sample-exact jump and a "Hear the seam" button. It never changes the file.
+  Open it from the details panel or the right-click menu. The loop shown is the one RPG Maker MZ itself reads
+  (upper-case names only, LOOPSTART alone ignored, ...); remarks say when the file and the game disagree.
+- `requirements-audio.txt` (numpy, soundfile): needed only by the loop editor. `check_env.py` reports them.
+
 ## [1.0.0] - 2026-11-04
 
 First public release.
