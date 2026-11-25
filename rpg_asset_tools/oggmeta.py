@@ -144,8 +144,7 @@ def loop_tags(info: OggInfo) -> LoopTags:
             continue
         seen.add(key)
         if name != key:
-            notes.append(f"{key} is stored as '{name}' (not in upper case). "
-                         "Upper case is the safe spelling for RPG Maker.")
+            notes.append(f"{key} is stored as '{name}' (not in upper case).")
         text = value.strip()
         if text.isascii() and text.isdigit():
             found[key] = int(text)

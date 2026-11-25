@@ -20,7 +20,7 @@ import threading
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QIODevice, QObject, QPointF, QRectF, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen, QPolygonF
 from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import (
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 import audiodecode
+import enginetags
 import loopmath
 import oggmeta
 
@@ -79,44 +80,55 @@ class _DecodeJob(QObject):
 # the sound source the audio device pulls from
 # --------------------------------------------------------------------------
 
-class _LoopDevice(QIODevice):
-    """Gives the sound device the next samples, looping exactly like the game."""
+class _Feeder:
+    """Cuts the sound into pieces for the sound device, looping exactly like the game. It lives in
+    the window's thread; a timer calls `fill` to top up the device's buffer (push mode)."""
 
-    def __init__(self, samples, parent=None):
-        super().__init__(parent)
+    MAX_FRAMES = 16384
+
+    def __init__(self, samples):
         self._samples = samples
-        self._lock = threading.Lock()
         self._pos = 0
         self._loop_start = 0
         self._loop_end = None
-        self.finished = False             # set when a play-once run has delivered its last sample
+        self._pending = b""               # bytes the device did not take yet
+        self.finished = False             # a play-once run has handed over its last sample
+        self.fed = 0                      # bytes given to the device (for the report)
+        self.feeds = 0
 
     def configure(self, pos: int, loop_start: int, loop_end) -> None:
-        with self._lock:
-            self._pos, self._loop_start, self._loop_end = pos, loop_start, loop_end
-            self.finished = False
+        self._pos, self._loop_start, self._loop_end = pos, loop_start, loop_end
+        self._pending = b""
+        self.finished = False
 
-    def isSequential(self) -> bool:
-        return True
-
-    def bytesAvailable(self) -> int:
-        return (1 << 20) + super().bytesAvailable()
-
-    def writeData(self, data) -> int:
-        return 0
-
-    def readData(self, maxlen):
+    def fill(self, io, free_bytes: int) -> None:
+        """Write as much as the device has room for."""
         _, loopplayback = _np()
         frame_bytes = 2 * self._samples.shape[1]
-        n = min(int(maxlen) // frame_bytes, 32768)
-        if n <= 0:
-            return b""
-        with self._lock:
+        if self._pending:
+            took = int(io.write(self._pending))
+            self._pending = self._pending[max(took, 0):]
+            self.fed += max(took, 0)
+            free_bytes -= max(took, 0)
+            if self._pending:
+                return
+        while free_bytes >= frame_bytes and not self.finished:
+            n = min(free_bytes // frame_bytes, self.MAX_FRAMES)
             chunk, self._pos = loopplayback.render(
                 self._samples, self._pos, n, self._loop_start, self._loop_end)
-        if len(chunk) < n:
-            self.finished = True
-        return loopplayback.to_pcm16(chunk)
+            if len(chunk) < n:
+                self.finished = True
+            if len(chunk) == 0:
+                break
+            data = loopplayback.to_pcm16(chunk)
+            data = data.tobytes() if hasattr(data, "tobytes") else bytes(data)
+            took = max(int(io.write(data)), 0)
+            self.feeds += 1
+            self.fed += took
+            free_bytes -= len(data)
+            if took < len(data):
+                self._pending = data[took:]
+                return
 
 
 # --------------------------------------------------------------------------
@@ -363,10 +375,17 @@ class LoopEditorDialog(QDialog):
         self._path = Path(path)
         self._info = info
         self._tags = oggmeta.loop_tags(info)
+        try:
+            self._engine = enginetags.read_engine_tags_from_file(self._path)
+        except OSError:
+            self._engine = enginetags.EngineTags(info.sample_rate, self._tags.start or 0,
+                                                 self._tags.length or 0)
         self._audio = None
         self._loop = None
         self._sink = None
-        self._dev = None
+        self._io = None
+        self._dev = None                  # the _Feeder of the current play run
+        self._sink_error = ""
         self._origin = 0                  # where the current play run started
         self._head = 0                    # where the cursor is while stopped or paused
         self._shut = False
@@ -455,7 +474,8 @@ class LoopEditorDialog(QDialog):
         self._set_controls_enabled(False)
         self._show_tag_values()
         self._timer = QTimer(self)
-        self._timer.setInterval(30)
+        self._timer.setInterval(10)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._tick)
 
         self._job = _DecodeJob(self._path)
@@ -472,7 +492,7 @@ class LoopEditorDialog(QDialog):
             self._on_failed("The file contains no audio.")
             return
         self._audio = audio
-        self._loop = loopmath.resolve_loop(self._tags, audio.frames)
+        self._loop = loopmath.resolve_loop(self._engine, audio.frames, self._tags)
         self.view.set_audio(pyr, audio.sample_rate)
         self.view.set_loop(self._loop)
         self.ready = True
@@ -545,8 +565,28 @@ class LoopEditorDialog(QDialog):
 
     # ----- playing
     def is_playing(self) -> bool:
-        return self._sink is not None and self._sink.state() in (
-            QAudio.State.ActiveState, QAudio.State.IdleState) and not self._dev.finished
+        """True while a play run is going (a play-once run counts until its last sample is out)."""
+        return self._sink is not None and self._sink.state() != QAudio.State.StoppedState
+
+    def playback_report(self) -> str:
+        """One line of facts about the sound output, for error messages and bug reports."""
+        if self._sink is None:
+            return f"no sink ({self._sink_error or 'not started'})"
+        d = self._dev
+        try:
+            err = self._sink.error().name
+            dev = QMediaDevices.defaultAudioOutput().description()
+            return (f"state={self._sink.state().name} error={err} device='{dev}' "
+                    f"buffer={self._sink.bufferSize()}B free={self._sink.bytesFree()}B "
+                    f"processed={self._sink.processedUSecs()}us fed={d.fed}B in {d.feeds} writes "
+                    f"finished={d.finished}")
+        except RuntimeError as e:
+            return f"sink gone ({e})"
+
+    def _feed(self) -> None:
+        if self._sink is None or self._io is None or self._dev is None:
+            return
+        self._dev.fill(self._io, self._sink.bytesFree())
 
     def _loop_args(self):
         if self.chk_loop.isChecked():
@@ -574,12 +614,19 @@ class LoopEditorDialog(QDialog):
             return False
         self._sink = QAudioSink(device, fmt, self)
         self._sink.setVolume(self.volume.value() / 100.0)
-        self._dev = _LoopDevice(audio.samples, self)
-        self._dev.open(QIODevice.OpenModeFlag.ReadOnly)
+        self._sink.setBufferSize(int(audio.sample_rate * audio.channels * 2 * 0.4))     # about 0.4 s
+        self._dev = _Feeder(audio.samples)
         ls, le = self._loop_args()
         self._dev.configure(pos, ls, le)
         self._origin = pos
-        self._sink.start(self._dev)
+        self._io = self._sink.start()
+        if self._io is None:
+            self._sink_error = f"the sound device did not start (state {self._sink.state().name})"
+            self._say("The sound device could not be started. " + self._sink_error)
+            self._stop_sink()
+            return False
+        self._sink_error = ""
+        self._feed()
         self._timer.start()
         self._say("Mouse wheel: zoom   Shift + wheel: scroll   Click: move the cursor. "
                   "This window only shows and plays; it does not change the file.")
@@ -592,10 +639,8 @@ class LoopEditorDialog(QDialog):
             self._sink.stop()
             self._sink.deleteLater()
             self._sink = None
-        if self._dev is not None:
-            self._dev.close()
-            self._dev.deleteLater()
-            self._dev = None
+        self._io = None
+        self._dev = None
         self.btn_play.setText("Play")
 
     def _current_head(self) -> int:
@@ -611,7 +656,8 @@ class LoopEditorDialog(QDialog):
     def _tick(self) -> None:
         if self._sink is None:
             return
-        if self._dev.finished and self._sink.state() == QAudio.State.IdleState:
+        self._feed()
+        if self._dev.finished and not self._dev._pending and self._sink.state() == QAudio.State.IdleState:
             self._head = self._audio.frames - 1
             self._stop_sink()
             self.view.set_cursor(self._head)

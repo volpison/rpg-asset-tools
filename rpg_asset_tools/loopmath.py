@@ -12,12 +12,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from enginetags import EngineTags, engine_loop
 from oggmeta import LoopTags
 
 NONE = "none"                  # no loop tags: the whole file repeats
 COMPLETE = "complete"          # LOOPSTART and LOOPLENGTH both present
-START_ONLY = "start_only"      # LOOPSTART without LOOPLENGTH
-LENGTH_ONLY = "length_only"    # LOOPLENGTH without LOOPSTART
+START_ONLY = "start_only"      # LOOPSTART without LOOPLENGTH: the game ignores it
+LENGTH_ONLY = "length_only"    # LOOPLENGTH without LOOPSTART: the loop starts at 0
 INVALID = "invalid"            # values that do not fit the file
 
 
@@ -33,38 +34,59 @@ class LoopView:
         return self.end - self.start
 
 
-def resolve_loop(tags: LoopTags, total: int) -> LoopView:
-    """The loop that the editor shows and plays for these tags in a file of `total` samples.
+def resolve_loop(engine: EngineTags, total: int, standard: LoopTags | None = None) -> LoopView:
+    """The loop the game plays for this file, as RPG Maker MZ's own reader sees it (enginetags),
+    for a file of `total` samples. `standard` is the same file read by the Vorbis rules (oggmeta);
+    when the two disagree a note says why.
 
-    A loop that does not fit the file is reported as INVALID and shown as the whole file,
-    so playing never breaks."""
+    A loop that does not fit the file is reported as INVALID and shown as the whole file or
+    until the end, so playing never breaks."""
     if total <= 0:
         return LoopView(0, 0, NONE, ("The file has no audio.",))
+    notes = list(_disagreements(standard, engine)) if standard is not None else []
+    el = engine_loop(engine, total)
     whole = (0, total)
-    start, length = tags.start, tags.length
-    if start is None and length is None:
-        return LoopView(*whole, NONE, ("No loop tags: the whole file is the loop.",))
-    if start is None:
-        start = 0
+    if not el.from_tags:
+        if engine.loop_start and not engine.loop_length:
+            notes.append("LOOPSTART is set but LOOPLENGTH is not. RPG Maker ignores LOOPSTART on its own "
+                         "and repeats the whole file.")
+            return LoopView(*whole, START_ONLY, tuple(notes))
+        notes.append("No usable loop tags: the game repeats the whole file.")
+        return LoopView(*whole, NONE, tuple(notes))
+    start, length = el.start, el.length
+    end = start + length
+    status = COMPLETE
+    if standard is not None and standard.start is None:
         status = LENGTH_ONLY
-        notes = ["LOOPLENGTH is present but LOOPSTART is not; the loop is shown from sample 0."]
-    elif length is None:
-        status = START_ONLY
-        notes = ["LOOPLENGTH is missing; the loop is shown until the end of the file."]
-    else:
-        status = COMPLETE
-        notes = []
-    end = total if length is None else start + length
+        notes.append("LOOPSTART is missing; the loop starts at sample 0.")
     if start >= total:
-        return LoopView(*whole, INVALID,
-                        (f"LOOPSTART ({start}) is beyond the end of the file ({total} samples).",))
-    if length is not None and length <= 0:
-        return LoopView(*whole, INVALID, ("LOOPLENGTH is 0, so there is no loop to show.",))
+        notes.append(f"LOOPSTART ({start}) is beyond the end of the file ({total} samples); "
+                     "the whole file is shown.")
+        return LoopView(*whole, INVALID, tuple(notes))
     if end > total:
         notes.append(f"The loop ends at sample {end}, after the end of the file ({total}); "
                      "it is shown until the end.")
         return LoopView(start, total, INVALID, tuple(notes))
     return LoopView(start, end, status, tuple(notes))
+
+
+def _disagreements(standard: LoopTags, engine: EngineTags) -> list[str]:
+    """Plain-words notes where the game's reader and the Vorbis reading of the file differ."""
+    out: list[str] = []
+    for name, std, eng in (("LOOPSTART", standard.start, engine.loop_start),
+                           ("LOOPLENGTH", standard.length, engine.loop_length)):
+        if std is not None and eng != std:
+            if not eng:
+                out.append(f"RPG Maker does not find {name} in this file. It only finds names written in "
+                           "upper case, inside the first part of the comment block.")
+            elif str(eng).startswith(str(std)):
+                out.append(f"RPG Maker reads {name} as {eng}, but the file says {std}: its reader runs on "
+                           "into the next bytes and a digit there is added to the number.")
+            else:
+                out.append(f"RPG Maker reads {name} as {eng}, but the file says {std}.")
+        elif std is None and eng:
+            out.append(f"RPG Maker finds {name} = {eng} in the header, but not as a tag of its own.")
+    return out
 
 
 def frames_to_seconds(frames: int, rate: int) -> float:

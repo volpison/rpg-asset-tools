@@ -235,9 +235,17 @@ python -m pip install -r requirements-audio.txt
 * *From loop start* starts at the loop start. *Hear the seam* starts 3 seconds before the loop end so you
   hear the jump itself: a click or a rhythm slip at the jump means the loop points are not right.
 
-**Good to know:** the editor shows what is stored in the file. How the game treats a file that has only
-LOOPSTART, or tag names written in lower case, has not yet been checked against the engine's own script
-(`js/rmmz_core.js`); until then, keep both tags present and in upper case.
+**Good to know:** the editor shows the loop the way the game reads it. RPG Maker MZ (checked against
+`js/rmmz_core.js` of version 1.0.0) does not read tags like a standard Vorbis tool does:
+
+* Tag names must be in **upper case**; `loopstart` is not found.
+* **LOOPSTART alone is ignored** and the whole file repeats. LOOPLENGTH alone starts the loop at sample 0.
+* A loop needs a LOOPLENGTH above 0.
+* A comment block long enough to run onto a second Ogg page (for example a big cover picture or long
+  description stored before the loop tags) hides the tags from the game.
+* If a tag is followed by a comment 48 to 57 bytes long, the game can add a digit to the number.
+
+When the game would read something different from what the file says, a remark under the waveform says so.
 
 ## Safety, backups and Undo
 

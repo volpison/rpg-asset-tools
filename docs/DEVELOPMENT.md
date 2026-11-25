@@ -36,6 +36,7 @@ call into them. Keep it that way: it is what makes most of the app testable with
 | `health.py` | `SECTIONS`, `run_section`, `HealthReport`: runs one Health tab at a time |
 | `health_gui.py`, `gui.py` | windows |
 | `oggmeta.py` | reads an Ogg Vorbis header: sample rate, channels, comment tags, `loop_tags()` (pure Python, read-only) |
+| `enginetags.py` | what RPG Maker MZ's own reader finds in an .ogg (port of `_readLoopComments` / `_readMetaData` / `_onDecode`), read-only |
 | `loopmath.py` | which loop is shown/played for the tags found, time formatting, ruler steps |
 | `waveform.py` | min/max pyramid for drawing any zoom level quickly (numpy) |
 | `loopplayback.py` | which samples come next, the exact loop jump, cursor position (numpy) |
@@ -118,10 +119,24 @@ decoded audio before and after.
 to loop start is then exact to the sample, and the later metronome can be mixed into the same buffer so it
 stays in time. Left out: `QMediaPlayer` (cannot loop on a sample).
 
-**Loop editor: engine rules are not yet verified against the engine.** The editor reads tags the way the Vorbis
-format defines them (names are case-insensitive) and warns about anything unusual. To check against
-`js/rmmz_core.js` before step 2 writes anything: whether lower-case tag names are read, what the engine does
-with LOOPSTART but no LOOPLENGTH, and whether a tag far into a long comment block is still found.
+**Loop editor: engine rules come from `js/rmmz_core.js` (MZ 1.0.0).** `enginetags.py` is a faithful port of
+the engine's byte scan, quirks included, because the editor must show what the game will play. Rules found:
+upper-case names only; each Ogg page scanned alone and a comment block that spans pages is skipped (its size
+becomes NaN); tag text runs to the next zero byte, so a following comment of 48 to 57 bytes puts a digit
+into the number; LOOPSTART without LOOPLENGTH is ignored (whole file loops); LOOPLENGTH without LOOPSTART
+starts at 0. **Constraints for the step-2 writer:** write both tags in upper case, keep them in the first
+Ogg page of the comment block, avoid the digit quirk, and verify by running `enginetags` on the written file.
+Only MZ 1.0.0 was checked; newer builds of `rmmz_core.js` should be compared.
+
+**Loop editor: playback is push mode.** A `QIODevice` subclass pulled by the sink failed on Windows (playback
+stopped at once), so `_Feeder` writes into the device from a 10 ms timer. `playback_report()` prints state,
+error and byte counts for bug reports.
+
+## Ideas for later
+
+* **Seam view:** an option to show, at the end of the loop, the waveform of the loop's beginning (after the
+  loop-start marker) instead of the file's real "outro", so the join can be judged by eye. (Requested by the user.)
+* Loop editor steps 2 to 4: edit and write the tags (backup + Undo), BPM grid and metronome, loop suggestions.
 
 ## Conventions
 

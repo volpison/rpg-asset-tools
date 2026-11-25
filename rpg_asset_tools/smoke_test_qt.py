@@ -109,6 +109,7 @@ def main() -> int:
     ap.add_argument("--assets", type=int, default=3000, help="extra unused pictures to create")
     ap.add_argument("--project", help="read-only timing run on this existing project")
     ap.add_argument("--show", action="store_true", help="visible windows (default: hidden)")
+    ap.add_argument("--audio", help="time the loop editor on this .ogg file (read-only; nothing is written)")
     ap.add_argument("--max-table-seconds", type=float, default=8.0)
     args = ap.parse_args()
     if not args.show:
@@ -405,14 +406,34 @@ def main() -> int:
                 while time.monotonic() - t0 < 0.5:
                     APP.processEvents()
                     time.sleep(0.01)
-                assert dlg.is_playing(), "playback stopped by itself"
-                assert dlg._head > 0, "the play cursor did not move"
-                played = f"played 0.5 s, cursor at sample {dlg._head}"
+                assert dlg.is_playing(), "playback stopped by itself: " + dlg.playback_report()
+                assert dlg._head > 0, "the play cursor did not move: " + dlg.playback_report()
+                played = f"played 0.5 s, cursor at sample {dlg._head} [{dlg.playback_report()}]"
                 dlg.play_seam()
                 pump()
                 dlg.stop()
             dlg.close()
             notes = [played]
+            if args.audio:                           # timing of a real file: where does the time go?
+                real = Path(args.audio)
+                t0 = time.monotonic()
+                d3 = open_and_wait(real, real.name)
+                t_open = time.monotonic() - t0
+                t0 = time.monotonic()
+                for _ in range(5):
+                    d3.view.fit()
+                    d3.view.grab()
+                t_fit = (time.monotonic() - t0) / 5
+                d3.view.zoom(0.05)
+                t0 = time.monotonic()
+                for _ in range(5):
+                    d3.view.grab()
+                t_zoom = (time.monotonic() - t0) / 5
+                notes.append(f"{real.name}: {d3._audio.frames} frames, {d3._audio.sample_rate} Hz; "
+                             f"open+decode+pyramid {t_open:.2f}s, paint fit {t_fit * 1000:.0f} ms, "
+                             f"paint zoomed {t_zoom * 1000:.0f} ms; engine reads "
+                             f"{d3._loop.start}..{d3._loop.end} ({d3._loop.status})")
+                d3.close()
             tagged = HERE.parent / "tests" / "data" / "loop_tagged.ogg"
             if tagged.is_file():                     # a file with real loop tags (present in a git checkout)
                 d2 = open_and_wait(tagged, "Tagged")

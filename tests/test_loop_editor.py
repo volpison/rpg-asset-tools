@@ -22,6 +22,7 @@ except ImportError:                      # numpy is optional (only the loop edit
     np = None
 
 import audiodecode  # noqa: E402
+import enginetags  # noqa: E402
 import loopmath  # noqa: E402
 import oggmeta  # noqa: E402
 
@@ -126,9 +127,90 @@ class TestOggMeta(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+def ogg_header(comments, rate=44100, split_after=None):
+    """A minimal Ogg Vorbis header (identification + comment pages) built by hand, for the
+    engine-reader quirks. `comments` is a list of byte strings (each 'NAME=value')."""
+    import struct
+
+    def page(body, seq, header_type=0):
+        segs, n = [], len(body)
+        while n >= 255:
+            segs.append(255)
+            n -= 255
+        segs.append(n)                     # a body that is an exact multiple of 255 ends with a 0
+        return (b"OggS\x00" + bytes([header_type]) + b"\0" * 8 + b"\1\0\0\0"
+                + struct.pack("<I", seq) + b"\0\0\0\0" + bytes([len(segs)]) + bytes(segs) + body)
+    ident = b"\x01vorbis" + struct.pack("<IBIiii", 0, 2, rate, 0, 0, 0) + b"\xb8\x01"
+    vendor = b"test"
+    body = b"\x03vorbis" + struct.pack("<I", len(vendor)) + vendor + struct.pack("<I", len(comments))
+    for c in comments:
+        body += struct.pack("<I", len(c)) + c
+    return page(ident, 0, 2) + page(body + b"\x01", 1)
+
+
+class TestEngineTags(unittest.TestCase):
+    def fixture(self, name):
+        return enginetags.read_engine_tags_from_file(DATA / name)
+
+    def test_normal_file(self):
+        t = self.fixture("loop_tagged.ogg")
+        self.assertEqual((t.sample_rate, t.loop_start, t.loop_length), (44100, 22050, 44100))
+
+    def test_lower_case_names_are_not_found(self):
+        t = self.fixture("lower_case.ogg")
+        self.assertEqual((t.loop_start, t.loop_length), (0, 0))
+
+    def test_start_only(self):
+        t = self.fixture("start_only.ogg")
+        self.assertEqual((t.loop_start, t.loop_length), (30000, 0))
+        self.assertFalse(enginetags.engine_loop(t, 100000).from_tags)
+
+    def test_tags_after_a_page_spanning_comment_block_are_lost(self):
+        t = self.fixture("big_comment.ogg")
+        self.assertEqual((t.loop_start, t.loop_length), (0, 0))
+
+    def test_opus_has_no_rate(self):
+        self.assertEqual(self.fixture("opus.ogg").sample_rate, 0)
+
+    def test_hand_built_header(self):
+        t = enginetags.read_engine_tags(ogg_header([b"LOOPSTART=100", b"LOOPLENGTH=2000"], rate=48000))
+        self.assertEqual((t.sample_rate, t.loop_start, t.loop_length), (48000, 100, 2000))
+
+    def test_digit_after_the_number_is_swallowed(self):
+        # the next comment's length byte is '0'..'9' (48..57 bytes) and ends up in the number
+        nxt = b"TITLE=" + b"x" * 42                       # 48 bytes long -> length byte 0x30 = '0'
+        self.assertEqual(len(nxt), 48)
+        t = enginetags.read_engine_tags(ogg_header([b"LOOPSTART=100", nxt, b"LOOPLENGTH=2000"]))
+        self.assertEqual(t.loop_start, 1000)
+
+    def test_no_such_digit_means_no_problem(self):
+        nxt = b"TITLE=" + b"x" * 20
+        t = enginetags.read_engine_tags(ogg_header([b"LOOPSTART=100", nxt, b"LOOPLENGTH=2000"]))
+        self.assertEqual((t.loop_start, t.loop_length), (100, 2000))
+
+    def test_loop_length_zero_means_whole_file(self):
+        t = enginetags.read_engine_tags(ogg_header([b"LOOPSTART=100", b"LOOPLENGTH=0"]))
+        el = enginetags.engine_loop(t, 5000)
+        self.assertEqual((el.start, el.length, el.from_tags), (0, 5000, False))
+
+    def test_length_only_starts_at_zero(self):
+        t = enginetags.read_engine_tags(ogg_header([b"LOOPLENGTH=700"]))
+        el = enginetags.engine_loop(t, 5000)
+        self.assertEqual((el.start, el.length, el.from_tags), (0, 700, True))
+
+    def test_truncated_data_does_not_crash(self):
+        data = ogg_header([b"LOOPSTART=100", b"LOOPLENGTH=2000"])
+        for cut in range(0, len(data), 7):
+            enginetags.read_engine_tags(data[:cut])
+        enginetags.read_engine_tags(b"")
+
+
+# --------------------------------------------------------------------------
 class TestLoopMath(unittest.TestCase):
     def view(self, start, length, total=1000):
-        return loopmath.resolve_loop(oggmeta.LoopTags(start, length, ()), total)
+        """A file whose tags are read the same way by the game and by the Vorbis rules."""
+        eng = enginetags.EngineTags(44100, start or 0, length or 0)
+        return loopmath.resolve_loop(eng, total, oggmeta.LoopTags(start, length, ()))
 
     def test_complete(self):
         v = self.view(100, 300)
@@ -142,10 +224,12 @@ class TestLoopMath(unittest.TestCase):
         v = self.view(None, None)
         self.assertEqual((v.start, v.end, v.status), (0, 1000, loopmath.NONE))
 
-    def test_start_only_and_length_only(self):
+    def test_start_only_is_ignored_by_the_game(self):
         v = self.view(250, None)
-        self.assertEqual((v.start, v.end, v.status), (250, 1000, loopmath.START_ONLY))
+        self.assertEqual((v.start, v.end, v.status), (0, 1000, loopmath.START_ONLY))
         self.assertTrue(v.notes)
+
+    def test_length_only_starts_at_zero(self):
         v = self.view(None, 400)
         self.assertEqual((v.start, v.end, v.status), (0, 400, loopmath.LENGTH_ONLY))
 
@@ -154,10 +238,18 @@ class TestLoopMath(unittest.TestCase):
         self.assertEqual((v.start, v.end, v.status), (0, 1000, loopmath.INVALID))
         v = self.view(900, 500)                      # ends after the file: shown until the end
         self.assertEqual((v.start, v.end, v.status), (900, 1000, loopmath.INVALID))
-        v = self.view(100, 0)
-        self.assertEqual((v.start, v.end, v.status), (0, 1000, loopmath.INVALID))
-        v = self.view(1000, None)                    # start exactly at the end: nothing to loop
+        v = self.view(1000, 5)                       # start exactly at the end: nothing to loop
         self.assertEqual(v.status, loopmath.INVALID)
+
+    def test_game_and_standard_disagree(self):
+        eng = enginetags.EngineTags(44100, 0, 0)     # the game finds nothing...
+        v = loopmath.resolve_loop(eng, 1000, oggmeta.LoopTags(100, 300, ()))   # ...the file has tags
+        self.assertEqual((v.start, v.end, v.status), (0, 1000, loopmath.NONE))
+        self.assertIn("does not find LOOPSTART", " ".join(v.notes))
+        eng = enginetags.EngineTags(44100, 1000, 300)
+        v = loopmath.resolve_loop(eng, 5000, oggmeta.LoopTags(100, 300, ()))
+        self.assertEqual(v.start, 1000)
+        self.assertIn("reads LOOPSTART as 1000", " ".join(v.notes))
 
     def test_empty_audio(self):
         v = self.view(0, 10, total=0)
