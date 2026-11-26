@@ -42,6 +42,7 @@ _LOOP_COLOR = QColor(255, 150, 30)
 _NONE_COLOR = QColor(130, 130, 130)
 _CURSOR_COLOR = QColor(230, 60, 60)
 _GRAB_PX = 7                          # how close the mouse must be to grab a loop marker
+_BUFFER_SECONDS = 0.15              # sound buffered in the output: short, so a restart is heard at once
 _SNAP_SECONDS = 0.02                  # how far (each way) a marker may move to reach a zero crossing
 
 
@@ -442,6 +443,7 @@ class LoopEditorDialog(QDialog):
         self._dev = None                  # the _Feeder of the current play run
         self._sink_error = ""
         self._sink_fmt = None             # (rate, channels) the current sink was made for
+        self._base_frames = 0             # frames written to the sink by earlier runs
         self._run_loop = (0, None)        # loop settings of the current play run
         self._origin = 0                  # where the current play run started
         self._head = 0                    # where the cursor is while stopped or paused
@@ -922,13 +924,15 @@ class LoopEditorDialog(QDialog):
     def _start_sink(self, pos: int) -> bool:
         audio = self._audio
         fmt_key = (audio.sample_rate, audio.channels)
-        if self._sink is not None and self._sink_fmt == fmt_key:
-            # Moving the cursor or changing the loop while playing: keep the same sink and only
-            # drop what is still waiting in its buffer. A second sink would play that buffer
-            # (about 0.4 s) on top of the new sound, which is heard as a short burst of loudness.
+        if (self._sink is not None and self._sink_fmt == fmt_key and self._io is not None
+                and self._sink.state() != QAudio.State.StoppedState):
+            # Moving the cursor or changing the loop while playing: keep the same running sink and
+            # simply write the new sound after what is already in its (short) buffer. No second sink
+            # (that played the old buffer on top of the new sound: a burst of loudness) and no
+            # stop/start of the device (that left half a second of silence).
             self._timer.stop()
-            self._sink.reset()
-            return self._begin_run(pos)
+            self._base_frames += self._dev.fed // (2 * audio.channels) if self._dev else 0
+            return self._begin_run(pos, fresh=False)
         self._stop_sink()
         device = QMediaDevices.defaultAudioOutput()
         if device.isNull():
@@ -945,27 +949,30 @@ class LoopEditorDialog(QDialog):
             return False
         self._sink = QAudioSink(device, fmt, self)
         self._sink.setVolume(self.volume.value() / 100.0)
-        self._sink.setBufferSize(int(audio.sample_rate * audio.channels * 2 * 0.4))     # about 0.4 s
+        self._sink.setBufferSize(int(audio.sample_rate * audio.channels * 2 * _BUFFER_SECONDS))
         self._sink_fmt = fmt_key
-        return self._begin_run(pos)
+        self._base_frames = 0
+        return self._begin_run(pos, fresh=True)
 
-    def _begin_run(self, pos: int) -> bool:
-        """Start feeding the (new or reset) sink from sample `pos`."""
+    def _begin_run(self, pos: int, fresh: bool) -> bool:
+        """Start feeding the sink from sample `pos` (a new sink is started; a running one just
+        gets the new sound written after the old one)."""
         audio = self._audio
         self._dev = _Feeder(audio.samples)
         ls, le = self._loop_args()
         self._run_loop = (ls, le)          # the settings this run really plays with
         self._dev.configure(pos, ls, le)
         self._origin = pos
-        self._io = self._sink.start()
-        if self._io is None or self._sink.state() == QAudio.State.StoppedState:
-            self._sink_failed("the sound device did not start")
-            return False
+        if fresh:
+            self._io = self._sink.start()
+            if self._io is None or self._sink.state() == QAudio.State.StoppedState:
+                self._sink_failed("the sound device did not start")
+                return False
         self._sink_error = ""
         self._feed()
         self._timer.start()
-        self._say("Mouse wheel: zoom   Shift + wheel: scroll   Click: move the cursor. "
-                  "This window only shows and plays; it does not change the file.")
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText(self._HINT)
         self.btn_play.setText("Pause")
         return True
 
@@ -995,7 +1002,9 @@ class LoopEditorDialog(QDialog):
             return self._head
         _, loopplayback = _np()
         rate = self._audio.sample_rate
-        played = int(self._sink.processedUSecs() * rate / 1_000_000)
+        # frames heard since this run's first sample reached the speakers (older runs' sound, still in
+        # the buffer when the run was started, comes first)
+        played = max(0, int(self._sink.processedUSecs() * rate / 1_000_000) - self._base_frames)
         ls, le = self._run_loop
         return loopplayback.advance(self._origin, played, self._audio.frames, ls, le)
 
