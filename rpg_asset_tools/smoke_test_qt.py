@@ -412,6 +412,16 @@ def main() -> int:
                 assert dlg.is_playing(), "playback stopped by itself: " + dlg.playback_report()
                 assert dlg._head > 0, "the play cursor did not move: " + dlg.playback_report()
                 played = f"played 0.5 s, cursor at sample {dlg._head} [{dlg.playback_report()}]"
+                first_sink = dlg._sink
+                dlg.play(100000)                     # moving the cursor while playing: same sink, no overlap
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 0.3:
+                    APP.processEvents()
+                    time.sleep(0.01)
+                assert dlg._sink is first_sink, "a new sound output was made for a simple restart"
+                assert dlg.is_playing(), "playback stopped after moving the cursor: " + dlg.playback_report()
+                assert 100000 <= dlg._head < 100000 + 44100 // 2, \
+                    f"the cursor is at {dlg._head} after restarting at 100000: " + dlg.playback_report()
                 dlg.play_seam()
                 pump()
                 dlg.stop()
