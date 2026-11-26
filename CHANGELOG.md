@@ -7,6 +7,9 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Loop editor, step 4 (suggest loops): "Suggest loops..." compares the song with itself and lists the best loop
+  points (start, end, length, match %). Use one, or use it and hear the seam; nothing is saved until "Save tags...".
+  It can keep the current start or end and look for the other point only.
 - Loop editor, step 3 (beat grid and metronome): type the BPM and the first beat (or place it at the cursor) to
   draw beat and bar lines over the wave, snap markers to beats or bars, set the loop length in bars, work out
   the BPM from a loop of known length, and hear a metronome click that stays in time with the music and the

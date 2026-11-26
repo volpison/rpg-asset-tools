@@ -478,6 +478,7 @@ class LoopEditorDialog(QDialog):
             self._engine = enginetags.EngineTags(info.sample_rate, self._tags.start or 0,
                                                  self._tags.length or 0)
         self._audio = None
+        self._suggest = None
         self._loop = None
         self._sink = None
         self._io = None
@@ -593,6 +594,10 @@ class LoopEditorDialog(QDialog):
         self.btn_set_end = QPushButton("End = cursor")
         self.btn_set_end.setToolTip("Put the loop end at the cursor.")
         self.btn_set_end.clicked.connect(lambda: self._set_from_cursor("end"))
+        self.btn_suggest = QPushButton("Suggest loops...")
+        self.btn_suggest.setToolTip("Compare the song with itself and list the places where it repeats, "
+                                    "to use as loop points. You choose, then listen to the seam.")
+        self.btn_suggest.clicked.connect(lambda _c=False: self.suggest_loops())
         self.chk_snap = QCheckBox("Snap to zero crossing")
         self.chk_snap.setChecked(True)
         self.chk_snap.setToolTip("When you drag a marker or use Start/End = cursor, move it to the nearest "
@@ -605,7 +610,7 @@ class LoopEditorDialog(QDialog):
         self.btn_save.setToolTip("Write LOOPSTART and LOOPLENGTH into the file. A backup is made first "
                                  "and Undo in the main window can restore it.")
         self.btn_save.clicked.connect(lambda _checked=False: self.save_tags())
-        for wdg in (self.btn_set_start, self.btn_set_end, self.chk_snap):
+        for wdg in (self.btn_set_start, self.btn_set_end, self.btn_suggest, self.chk_snap):
             edit.addWidget(wdg)
         edit.addStretch(1)
         edit.addWidget(self.btn_revert)
@@ -745,7 +750,7 @@ class LoopEditorDialog(QDialog):
     def _set_controls_enabled(self, on: bool) -> None:
         for wdg in (self.btn_play, self.btn_stop, self.btn_from_loop, self.btn_seam,
                     self.chk_loop, self.volume, self.scroll, *self.zoom_btns,
-                    self.btn_set_start, self.btn_set_end, self.chk_snap, *self.ed.values(),
+                    self.btn_set_start, self.btn_set_end, self.btn_suggest, self.chk_snap, *self.ed.values(),
                     self.chk_grid, self.ed_bpm, self.ed_offset, self.btn_offset_cursor, self.spin_bpb,
                     self.cmb_gridsnap, self.spin_bars, self.btn_bars, self.btn_bpm_from_loop):
             wdg.setEnabled(on)
@@ -955,6 +960,23 @@ class LoopEditorDialog(QDialog):
         self._refresh_edit_ui()
         self._show_tag_values()
         return True
+
+    def suggest_loops(self):
+        """Open the window that suggests loop points; returns it (None if the song is not ready)."""
+        if not self.ready:
+            return None
+        import loop_suggest_gui
+        if self._suggest is not None:
+            self._suggest.close()
+        self._suggest = loop_suggest_gui.SuggestDialog(
+            self, self._audio.samples, self._audio.sample_rate, self.loop_points(), self._grid,
+            self._use_suggestion)
+        self._suggest.show()
+        return self._suggest
+
+    def _use_suggestion(self, start: int, end: int, hear: bool) -> None:
+        if self.set_loop_points(start, end) and hear:
+            self.play_seam()
 
     def _problem(self, text: str) -> None:
         self.hint.setText(f"<span style='color:#c0392b'>{escape(text)}</span>")
@@ -1377,6 +1399,9 @@ class LoopEditorDialog(QDialog):
     # ----- closing
     def _shutdown(self) -> None:
         self._shut = True                 # a late decode result is ignored from now on
+        if self._suggest is not None:
+            self._suggest.close()
+            self._suggest = None
         self._stop_sink()
         self.ready = False
         self._metro = None

@@ -47,6 +47,8 @@ call into them. Keep it that way: it is what makes most of the app testable with
 | `waveform.py` | min/max pyramid for drawing any zoom level quickly (numpy) |
 | `loopplayback.py` | which samples come next, the exact loop jump, cursor position (numpy) |
 | `audiodecode.py` | the one place that decodes audio (optional numpy + soundfile; clear message when missing) |
+| `loopfind.py` | loop-point suggestions by self-comparison of the song (numpy, no Qt) |
+| `loop_suggest_gui.py` | the "Suggest loops" window: background search, candidate table |
 | `loop_editor_gui.py` | the loop editor window: `WaveformView`, `LoopEditorDialog`, `open_loop_editor()` |
 | `fit_table.py` | `FitTable`: fitted, resizable, reorderable columns with an empty-state overlay |
 | `filecache.py`, `filefacts.py`, `parallel.py` | per-file caches, cached file hashes / PNG sizes, process pool and `threaded_map` |
@@ -154,11 +156,20 @@ into the same PCM chunk as the music using `loopplayback.positions()` (the file 
 sample), so it follows the loop jump exactly and needs no second timer. Left out: tempo changes, tap tempo,
 automatic BPM detection.
 
+**Loop editor: suggestions by self-comparison.** `loopfind.py` reduces the song to about 11 kHz, describes
+each 2048-sample frame by 32 log-spaced band energies (song mean removed, unit length, silent frames zeroed),
+builds the cosine self-similarity matrix and, for every loop length, averages the diagonal over about +-2 s.
+Peaks are thinned by non-maximum suppression, one point is refined to the exact sample by waveform
+cross-correlation and a seam score (waveform match just after and just before the jump) is added; candidates
+with a seam score below 0.3 are dropped, and the windows at the file edges count at least half a window so
+a short match at the very edge cannot win. No BPM is needed. It runs in a worker thread with a cancel flag.
+Left out: tempo or key analysis, learning-based methods, crossfading the loop.
+
 ## Ideas for later
 
 * **Seam view:** an option to show, at the end of the loop, the waveform of the loop's beginning (after the
   loop-start marker) instead of the file's real "outro", so the join can be judged by eye. (Requested by the user.)
-* Loop editor step 4: loop-point suggestions (self-comparison); tap tempo / BPM detection; a grid per section for songs that change tempo.
+* Tap tempo / BPM detection; a grid per section for songs that change tempo.
 
 ## Conventions
 
