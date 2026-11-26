@@ -24,20 +24,25 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen, QPolygonF
 from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QCheckBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QScrollBar, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 import audiodecode
 import enginetags
+import loopedit
 import loopmath
+import loopwrite
 import oggmeta
+import oggwrite
 
 _RULER_H = 22
 _BAR_H = 18
 _LOOP_COLOR = QColor(255, 150, 30)
 _NONE_COLOR = QColor(130, 130, 130)
 _CURSOR_COLOR = QColor(230, 60, 60)
+_GRAB_PX = 7                          # how close the mouse must be to grab a loop marker
+_SNAP_SECONDS = 0.02                  # how far (each way) a marker may move to reach a zero crossing
 
 
 def _np():
@@ -139,6 +144,8 @@ class WaveformView(QWidget):
     hovered = Signal(int)                 # sample under the mouse, -1 when none
     seek_requested = Signal(int)          # the user clicked here
     view_changed = Signal()               # zoom or scroll position changed
+    marker_dragged = Signal(str, int)     # "start" or "end" moved to this sample (while the button is down)
+    marker_released = Signal()            # the mouse button was let go after dragging a marker
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -152,6 +159,8 @@ class WaveformView(QWidget):
         self._span = 1.0
         self._cursor = None
         self._hover = -1
+        self._editable = False
+        self._drag = None                 # "start" / "end" while a marker is being dragged
         self._message = "Reading the sound..."
 
     # ----- data
@@ -161,6 +170,9 @@ class WaveformView(QWidget):
         self._loop = None
         self._cursor = None
         self.update()
+
+    def set_editable(self, on: bool) -> None:
+        self._editable = bool(on)
 
     def set_message(self, text: str) -> None:
         self._message = text
@@ -223,12 +235,37 @@ class WaveformView(QWidget):
         return min(max(f, 0), max(self.total() - 1, 0))
 
     # ----- mouse
+    def _marker_at(self, x: float):
+        """"start" or "end" when the mouse is on a loop marker, else None."""
+        loop = self._loop
+        if not self._editable or loop is None or loop.status == loopmath.NONE:
+            return None
+        d_start, d_end = abs(x - self.x_of(loop.start)), abs(x - self.x_of(loop.end))
+        if min(d_start, d_end) > _GRAB_PX:
+            return None
+        return "start" if d_start <= d_end else "end"
+
+    def _frame_edge(self, x: float) -> int:
+        """Sample under x, where the end of the file counts too (a loop may end exactly there)."""
+        f = int(round(self._start + x / max(self.width(), 1) * self._span))
+        return min(max(f, 0), self.total())
+
     def mouseMoveEvent(self, ev):
         if self._pyr is None:
             return
-        self._hover = self.frame_at(ev.position().x())
+        x = ev.position().x()
+        if self._drag:
+            self.marker_dragged.emit(self._drag, self._frame_edge(x))
+        else:
+            self.setCursor(Qt.SizeHorCursor if self._marker_at(x) else Qt.ArrowCursor)
+        self._hover = self.frame_at(x)
         self.hovered.emit(self._hover)
         self.update()
+
+    def mouseReleaseEvent(self, ev):
+        if self._drag:
+            self._drag = None
+            self.marker_released.emit()
 
     def leaveEvent(self, ev):
         self._hover = -1
@@ -237,6 +274,10 @@ class WaveformView(QWidget):
 
     def mousePressEvent(self, ev):
         if self._pyr is not None and ev.button() == Qt.LeftButton:
+            which = self._marker_at(ev.position().x())
+            if which:
+                self._drag = which
+                return
             self.seek_requested.emit(self.frame_at(ev.position().x()))
 
     def wheelEvent(self, ev):
@@ -368,6 +409,12 @@ class WaveformView(QWidget):
             for x in (x0, x1):
                 if 0 <= x <= w:
                     p.drawLine(QPointF(x, _RULER_H), QPointF(x, self.height()))
+            if self._editable:                               # a grip on each marker: they can be dragged
+                p.setBrush(_LOOP_COLOR)
+                p.setPen(QPen(QColor(0, 0, 0), 1))
+                for x in (x0, x1):
+                    if -_GRAB_PX <= x <= w + _GRAB_PX:
+                        p.drawRect(QRectF(x - 4, _RULER_H + 1, 8, _BAR_H - 2))
 
 
 # --------------------------------------------------------------------------
@@ -375,7 +422,8 @@ class WaveformView(QWidget):
 # --------------------------------------------------------------------------
 
 class LoopEditorDialog(QDialog):
-    def __init__(self, path: Path, title: str, info: oggmeta.OggInfo, parent=None):
+    def __init__(self, path: Path, title: str, info: oggmeta.OggInfo, parent=None,
+                 game=None, on_saved=None):
         super().__init__(parent)
         self.setWindowTitle(f"Loop editor - {title}")
         self.resize(1000, 560)
@@ -399,6 +447,11 @@ class LoopEditorDialog(QDialog):
         self._shut = False
         self.ready = False
         self.error = ""
+        self._game = Path(game) if game else None      # the open project: needed to save tags
+        self._on_saved = on_saved                     # called after the tags were written
+        self._saved = None                            # (start, length) the file has now, None = no loop
+        self._edit = None                             # (start, length) being edited, None = not edited
+        self._discard = False
 
         lay = QVBoxLayout(self)
         head = QLabel(f"<b>{escape(title)}</b><br>{escape(self._path.name)} &nbsp;-&nbsp; "
@@ -411,6 +464,8 @@ class LoopEditorDialog(QDialog):
         self.view.hovered.connect(self._on_hover)
         self.view.seek_requested.connect(self._on_seek)
         self.view.view_changed.connect(self._sync_scroll)
+        self.view.marker_dragged.connect(self._on_marker_dragged)
+        self.view.marker_released.connect(self._on_marker_released)
         lay.addWidget(self.view, stretch=1)
         self.scroll = QScrollBar(Qt.Horizontal)
         self.scroll.valueChanged.connect(self._on_scroll)
@@ -471,11 +526,49 @@ class LoopEditorDialog(QDialog):
         grid.setColumnStretch(3, 1)
         lay.addLayout(grid)
 
+        edit = QHBoxLayout()
+        self.ed = {}
+        for key, label, tip in (
+                ("start", "Loop start", "LOOPSTART. Samples (132300), seconds (3 s or 3.5) or minutes:seconds (1:23.5)."),
+                ("length", "Length", "LOOPLENGTH. Changing it moves the loop end."),
+                ("end", "Loop end", "Where the loop jumps back (start + length). Changing it changes the length.")):
+            edit.addWidget(QLabel(label + ":"))
+            box = QLineEdit()
+            box.setFont(mono)
+            box.setFixedWidth(120)
+            box.setToolTip(tip)
+            box.editingFinished.connect(lambda k=key: self._on_field(k))
+            edit.addWidget(box)
+            self.ed[key] = box
+        self.btn_set_start = QPushButton("Start = cursor")
+        self.btn_set_start.setToolTip("Put the loop start at the cursor (click the wave to place the cursor).")
+        self.btn_set_start.clicked.connect(lambda: self._set_from_cursor("start"))
+        self.btn_set_end = QPushButton("End = cursor")
+        self.btn_set_end.setToolTip("Put the loop end at the cursor.")
+        self.btn_set_end.clicked.connect(lambda: self._set_from_cursor("end"))
+        self.chk_snap = QCheckBox("Snap to zero crossing")
+        self.chk_snap.setChecked(True)
+        self.chk_snap.setToolTip("When you drag a marker or use Start/End = cursor, move it to the nearest "
+                                 "place where the sound crosses zero (within 20 ms). Jumping between such "
+                                 "places does not click. Typed values are always used exactly.")
+        self.btn_revert = QPushButton("Revert")
+        self.btn_revert.setToolTip("Go back to the loop stored in the file.")
+        self.btn_revert.clicked.connect(lambda _checked=False: self.revert())
+        self.btn_save = QPushButton("Save tags...")
+        self.btn_save.setToolTip("Write LOOPSTART and LOOPLENGTH into the file. A backup is made first "
+                                 "and Undo in the main window can restore it.")
+        self.btn_save.clicked.connect(lambda _checked=False: self.save_tags())
+        for wdg in (self.btn_set_start, self.btn_set_end, self.chk_snap):
+            edit.addWidget(wdg)
+        edit.addStretch(1)
+        edit.addWidget(self.btn_revert)
+        edit.addWidget(self.btn_save)
+        lay.addLayout(edit)
+
         self.notes = QLabel("")
         self.notes.setWordWrap(True)
         lay.addWidget(self.notes)
-        self.hint = QLabel("Mouse wheel: zoom   Shift + wheel: scroll   Click: move the cursor. "
-                           "This window only shows and plays; it does not change the file.")
+        self.hint = QLabel(self._HINT)
         self.hint.setWordWrap(True)
         lay.addWidget(self.hint)
 
@@ -490,6 +583,9 @@ class LoopEditorDialog(QDialog):
         self._job.done.connect(self._on_decoded)
         self._job.failed.connect(self._on_failed)
         self._job.start()
+
+    _HINT = ("Mouse wheel: zoom   Shift + wheel: scroll   Click: move the cursor   Drag the orange "
+             "markers: move the loop. Nothing is written to the file until you press Save tags.")
 
     # ----- loading
     @Slot(object, object)
@@ -512,7 +608,10 @@ class LoopEditorDialog(QDialog):
             notes.append(f"The file has more than {audiodecode.MAX_CHANNELS} channels; "
                          "only the first two are shown and played.")
         self.notes.setText("\n".join(notes))
+        self._saved = self._saved_pair()
+        self.view.set_editable(True)
         self._set_controls_enabled(True)
+        self._refresh_edit_ui()
         self._sync_scroll()
 
     @Slot(str)
@@ -525,8 +624,12 @@ class LoopEditorDialog(QDialog):
 
     def _set_controls_enabled(self, on: bool) -> None:
         for wdg in (self.btn_play, self.btn_stop, self.btn_from_loop, self.btn_seam,
-                    self.chk_loop, self.volume, self.scroll, *self.zoom_btns):
+                    self.chk_loop, self.volume, self.scroll, *self.zoom_btns,
+                    self.btn_set_start, self.btn_set_end, self.chk_snap, *self.ed.values()):
             wdg.setEnabled(on)
+        if not on:
+            self.btn_save.setEnabled(False)
+            self.btn_revert.setEnabled(False)
 
     def _show_tag_values(self) -> None:
         rate = self._info.sample_rate
@@ -547,6 +650,217 @@ class LoopEditorDialog(QDialog):
 
     def _fmt_pos(self, frame: int) -> str:
         return f"{frame}  ({loopmath.format_time(frame, self._info.sample_rate)})"
+
+    # ----- editing the loop
+    def _saved_pair(self):
+        """(start, length) of the loop the file holds for the game, None when it has no usable loop."""
+        lp = self._loop
+        return (lp.start, lp.length) if lp is not None and lp.status == loopmath.COMPLETE else None
+
+    def loop_points(self):
+        """(start, end) of the loop now shown and played (the edited one, or the file's own)."""
+        return (self._loop.start, self._loop.end) if self._loop is not None else (0, 0)
+
+    @property
+    def dirty(self) -> bool:
+        return self._edit is not None and self._edit != self._saved
+
+    def set_loop_points(self, start: int, end: int) -> bool:
+        """Use this loop (samples). Returns False and explains when it does not fit the file."""
+        if not self.ready:
+            return False
+        total = self._audio.frames
+        if not (0 <= start < end <= total):
+            self._problem(f"A loop must lie inside the file: from 0 to {total} samples, "
+                          "and it must end after it starts.")
+            return False
+        self._edit = (start, end - start)
+        self._loop = loopmath.LoopView(start, end, loopmath.COMPLETE, ())
+        self.view.set_loop(self._loop)
+        self._refresh_edit_ui()
+        self._show_tag_values()
+        return True
+
+    def _problem(self, text: str) -> None:
+        self.hint.setText(f"<span style='color:#c0392b'>{escape(text)}</span>")
+        self.hint.setTextFormat(Qt.RichText)
+
+    def _snap(self, frame: int) -> int:
+        if not self.chk_snap.isChecked() or self._audio is None:
+            return frame
+        return loopedit.snap_to_zero_crossing(
+            self._audio.samples, frame, int(self._audio.sample_rate * _SNAP_SECONDS))
+
+    def _current_or_whole(self):
+        """The loop being edited; for a file without a loop, the whole file."""
+        if self._loop is not None and self._loop.status != loopmath.NONE:
+            return self._loop.start, self._loop.end
+        return 0, self._audio.frames
+
+    def _move_marker(self, which: str, frame: int) -> bool:
+        s, e = self._current_or_whole()
+        total = self._audio.frames
+        if which == "start":
+            s = max(0, min(frame, e - 1))
+        else:
+            e = min(total, max(frame, s + 1))
+        return self.set_loop_points(s, e)
+
+    def _on_marker_dragged(self, which: str, frame: int) -> None:
+        if self.ready:
+            self.hint.setTextFormat(Qt.PlainText)
+            self.hint.setText(self._HINT)
+            self._move_marker(which, self._snap(frame))
+
+    def _on_marker_released(self) -> None:
+        self._restart_if_playing()
+
+    def _set_from_cursor(self, which: str) -> None:
+        if self.ready and self._move_marker(which, self._snap(self._head)):
+            self._restart_if_playing()
+
+    def _on_field(self, key: str) -> None:
+        """A typed value was accepted (Enter, or leaving the box)."""
+        if not self.ready:
+            return
+        try:
+            self._apply_field(key)
+        finally:
+            self._refresh_edit_ui(force=True)                # show the numbers as samples again
+
+    def _apply_field(self, key: str) -> None:
+        s, e = self._current_or_whole()
+        try:
+            value = loopedit.parse_position(self.ed[key].text(), self._info.sample_rate)
+        except ValueError as ex:
+            self._problem(str(ex))
+            return
+        if self._edit is None and self._loop.status != loopmath.NONE and \
+                value == {"start": s, "end": e, "length": e - s}[key]:
+            return                                           # nothing changed
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText(self._HINT)
+        if key == "start":
+            s = value
+        elif key == "end":
+            e = value
+        else:
+            e = s + value
+        if self.set_loop_points(s, e):
+            self._restart_if_playing()
+
+    def revert(self) -> None:
+        """Back to the loop stored in the file."""
+        if not self.ready:
+            return
+        self._edit = None
+        self._loop = loopmath.resolve_loop(self._engine, self._audio.frames, self._tags)
+        self.view.set_loop(self._loop)
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText(self._HINT)
+        self._refresh_edit_ui()
+        self._show_tag_values()
+        self._restart_if_playing()
+
+    def _restart_if_playing(self) -> None:
+        if self._sink is not None:                          # carry on from here with the new loop
+            self._head = self._current_head()
+            self._start_sink(self._head)
+
+    def _refresh_edit_ui(self, force: bool = False) -> None:
+        rate = self._info.sample_rate
+        if self._loop is None:
+            return
+        s, e = self._current_or_whole()
+        whole = self._loop.status == loopmath.NONE and self._edit is None
+        values = {"start": "" if whole else str(s), "length": "" if whole else str(e - s),
+                  "end": "" if whole else str(e)}
+        for key, box in self.ed.items():
+            if force or not box.hasFocus():
+                box.setText(values[key])
+            box.setPlaceholderText("no loop" if whole else "")
+        self.btn_revert.setEnabled(self.dirty)
+        self.btn_save.setEnabled(self.dirty and self._game is not None)
+        if self.dirty and self._game is None:
+            self.btn_save.setToolTip("Open the loop editor from a project to save tags.")
+        times = ("" if whole else f"start {loopmath.format_time(s, rate)}   end {loopmath.format_time(e, rate)}   "
+                 f"length {loopmath.format_time(e - s, rate)}")
+        self.ed["end"].setToolTip(times or "Where the loop jumps back (start + length).")
+
+    def save_tags(self, ask: bool = True) -> bool:
+        """Write the edited loop into the file (backup first). Returns True when it was saved."""
+        if not self.ready or not self.dirty:
+            return False
+        if self._game is None:
+            QMessageBox.information(self, "Save tags", "Open the loop editor from a project to save tags.")
+            return False
+        start, length = self._edit
+        rate = self._info.sample_rate
+        old = self._saved
+        if ask:
+            old_txt = "none (the whole file repeats)" if old is None else \
+                f"LOOPSTART {old[0]}  ({loopmath.format_time(old[0], rate)}),  LOOPLENGTH {old[1]}"
+            answer = QMessageBox.question(
+                self, "Save loop tags",
+                f"Write these tags into {self._path.name}?\n\n"
+                f"Now in the file:  {old_txt}\n"
+                f"New:  LOOPSTART {start}  ({loopmath.format_time(start, rate)}),  LOOPLENGTH {length}\n\n"
+                "The sound itself is not changed. A backup is made first, and Undo in the main window "
+                "restores it. Close RPG Maker MZ and the game before saving.")
+            if answer != QMessageBox.Yes:
+                return False
+        was_playing = self._sink is not None
+        try:
+            loopwrite.save_loop_tags(self._game, self._path, start, length, lambda *_: None)
+        except oggwrite.OggWriteError as e:
+            QMessageBox.warning(self, "Save loop tags", str(e))
+            return False
+        except OSError as e:
+            QMessageBox.warning(self, "Save loop tags", f"The file could not be saved: {e.strerror or e}")
+            return False
+        self._reload_tags()
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText("Saved. Undo in the main window puts the old tags back.")
+        if self._on_saved:
+            self._on_saved()
+        if was_playing:
+            self._restart_if_playing()
+        return True
+
+    def _reload_tags(self) -> None:
+        """Read the file again after saving, the way the game will."""
+        self._info = oggmeta.read_ogg_info(self._path)
+        self._tags = oggmeta.loop_tags(self._info)
+        self._engine = enginetags.read_engine_tags_from_file(self._path)
+        self._edit = None
+        self._loop = loopmath.resolve_loop(self._engine, self._audio.frames, self._tags)
+        self._saved = self._saved_pair()
+        self.view.set_loop(self._loop)
+        notes = list(self._tags.notes) + list(self._loop.notes)
+        self.notes.setText("\n".join(notes))
+        self._refresh_edit_ui()
+        self._show_tag_values()
+
+    def discard_changes(self) -> None:
+        """Forget unsaved edits (so closing the window does not ask)."""
+        self._edit = None
+        self._discard = True
+
+    def _confirm_close(self) -> bool:
+        if not self.dirty or self._discard:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Unsaved loop")
+        box.setText("The loop has changes that are not saved. Save the tags before closing?")
+        save = box.addButton("Save tags", QMessageBox.ButtonRole.AcceptRole)
+        drop = box.addButton("Discard changes", QMessageBox.ButtonRole.DestructiveRole)
+        stay = box.addButton("Keep editing", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is save:
+            return self.save_tags(ask=False)
+        return clicked is drop
 
     # ----- view helpers
     def _zoom_to_loop(self) -> None:
@@ -763,11 +1077,18 @@ class LoopEditorDialog(QDialog):
         self._audio = None                # a closed window is only hidden; do not keep the song in memory
         self.view.release()
 
+    def reject(self) -> None:
+        if self._confirm_close():
+            super().reject()
+
     def done(self, result: int) -> None:
         self._shutdown()
         super().done(result)
 
     def closeEvent(self, ev) -> None:
+        if not self._confirm_close():
+            ev.ignore()
+            return
         self._shutdown()
         super().closeEvent(ev)
 
@@ -776,7 +1097,7 @@ class LoopEditorDialog(QDialog):
 # entry point used by the main window
 # --------------------------------------------------------------------------
 
-def open_loop_editor(path, title: str, parent=None):
+def open_loop_editor(path, title: str, parent=None, game=None, on_saved=None):
     """Open the loop editor for an .ogg file. Returns the window, or None after explaining
     to the user why it cannot be opened."""
     path = Path(path)
@@ -794,6 +1115,6 @@ def open_loop_editor(path, title: str, parent=None):
     except oggmeta.OggError as e:
         QMessageBox.warning(parent, "Loop editor", f"'{path.name}' cannot be opened.\n\n{e}")
         return None
-    dlg = LoopEditorDialog(path, title, info, parent)
+    dlg = LoopEditorDialog(path, title, info, parent, game=game, on_saved=on_saved)
     dlg.show()
     return dlg

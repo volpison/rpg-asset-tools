@@ -39,10 +39,10 @@ def read_history(game_folder: Path) -> list[dict]:
 
 
 def last_undoable(game_folder: Path) -> dict | None:
-    """Most recent rename/move operation that has not been undone yet."""
+    """Most recent rename/move/loop-tag operation that has not been undone yet."""
     events = read_history(game_folder)
     undone = {e.get("target") for e in events if e.get("op") == "undo"}
     for e in reversed(events):
-        if e.get("op") in ("rename", "move_unused", "merge") and e.get("id") not in undone:
+        if e.get("op") in ("rename", "move_unused", "merge", "loop_tags") and e.get("id") not in undone:
             return e
     return None

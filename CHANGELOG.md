@@ -7,6 +7,10 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Loop editor, step 2 (edit and save): drag the loop markers or type LOOPSTART / LOOPLENGTH (samples, seconds
+  or minutes:seconds), optionally snapping to zero crossings, hear the result, then *Save tags...*. The file is
+  backed up first, only its comment header is rewritten (the sound is untouched), the result is checked with the
+  game's own tag reader, and Undo restores the old file.
 - Loop editor, step 1 (view and listen): for BGM and BGS in Ogg Vorbis. Shows the waveform and the loop
   stored in the `LOOPSTART` / `LOOPLENGTH` tags, with zoom down to single samples, and plays the music looping
   like the game, with a sample-exact jump and a "Hear the seam" button. It never changes the file.

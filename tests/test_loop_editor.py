@@ -15,6 +15,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "rpg_asset_tools"))
+sys.path.insert(0, str(HERE))
 
 try:
     import numpy as np
@@ -23,8 +24,14 @@ except ImportError:                      # numpy is optional (only the loop edit
 
 import audiodecode  # noqa: E402
 import enginetags  # noqa: E402
+import fixture  # noqa: E402
+import history  # noqa: E402
+import loopedit  # noqa: E402
+import loopwrite  # noqa: E402
+import rename_engine  # noqa: E402
 import loopmath  # noqa: E402
 import oggmeta  # noqa: E402
+import oggwrite  # noqa: E402
 
 if np is not None:
     import loopplayback  # noqa: E402
@@ -211,6 +218,273 @@ class TestEngineTags(unittest.TestCase):
         for cut in range(0, len(data), 7):
             enginetags.read_engine_tags(data[:cut])
         enginetags.read_engine_tags(b"")
+
+
+# --------------------------------------------------------------------------
+def synthetic_ogg(comments, header_pages_extra=0, audio_pages=3):
+    """A small, well-formed Ogg Vorbis file (headers and fake audio pages) with valid CRCs."""
+    import struct
+    ident = b"\x01vorbis" + struct.pack("<IBIiii", 0, 2, 44100, 0, 0, 0) + b"\xb8\x01"
+    vendor = b"test"
+    comment = b"\x03vorbis" + struct.pack("<I", len(vendor)) + vendor + struct.pack("<I", len(comments))
+    for c in comments:
+        comment += struct.pack("<I", len(c)) + c
+    comment += b"\x01"
+    setup = b"\x05vorbis" + bytes(range(256)) * 3
+    out = oggwrite.build_page(2, 0, 7, 0, oggwrite._lacing_for(len(ident)), ident)
+    seq = 1
+    body = comment + setup                         # comment and setup share pages, as libvorbis does
+    laces = oggwrite._lacing_for(len(comment)) + oggwrite._lacing_for(len(setup))
+    out += oggwrite.build_page(0, 0, 7, seq, laces, body)
+    seq += 1
+    for k in range(audio_pages):
+        pkt = bytes([k + 1]) * (100 + k)
+        out += oggwrite.build_page(0, (k + 1) * 1000, 7, seq, oggwrite._lacing_for(len(pkt)), pkt)
+        seq += 1
+    return out
+
+
+class TestOggWrite(unittest.TestCase):
+    def all_crcs_ok(self, data):
+        for p in oggwrite.read_pages(data):
+            zeroed = p.raw[:22] + b"\0\0\0\0" + p.raw[26:]
+            self.assertEqual(oggwrite.page_crc(zeroed), int.from_bytes(p.raw[22:26], "little"))
+
+    def test_crc_matches_real_files(self):
+        for name in ("loop_tagged.ogg", "no_tags.ogg", "lower_case.ogg"):
+            self.all_crcs_ok((DATA / name).read_bytes())
+
+    def test_real_files_round_trip(self):
+        for name in ("loop_tagged.ogg", "no_tags.ogg", "lower_case.ogg", "start_only.ogg"):
+            with self.subTest(name):
+                data = (DATA / name).read_bytes()
+                out = oggwrite.rewrite_headers(data, 12345, 67890)
+                self.all_crcs_ok(out)
+                oggwrite.verify_written(data, out, 12345, 67890)
+                eng = enginetags.read_engine_tags(out)
+                self.assertEqual((eng.loop_start, eng.loop_length), (12345, 67890))
+                with tempfile.TemporaryDirectory() as d:
+                    p = Path(d) / "x.ogg"
+                    p.write_bytes(out)
+                    tags = oggmeta.loop_tags(oggmeta.read_ogg_info(p))     # the standard reading agrees
+                    self.assertEqual((tags.start, tags.length), (12345, 67890))
+                    self.assertEqual(tags.notes, ())
+
+    def test_lower_case_tags_are_replaced_by_upper_case_ones(self):
+        data = (DATA / "lower_case.ogg").read_bytes()
+        out = oggwrite.rewrite_headers(data, 5, 10)
+        _, entries = oggwrite._split_comments(oggwrite._layout(oggwrite.read_pages(out)).comment)
+        names = [e.split(b"=")[0] for e in entries]
+        self.assertEqual(names.count(b"LOOPSTART"), 1)
+        self.assertEqual(names.count(b"LOOPLENGTH"), 1)
+        self.assertNotIn(b"loopstart", names)
+        self.assertNotIn(b"looplength", names)
+
+    def test_other_comments_and_audio_are_untouched(self):
+        data = synthetic_ogg([b"TITLE=Song", b"loopstart=1", b"ARTIST=Me", b"LOOPLENGTH=9"])
+        out = oggwrite.rewrite_headers(data, 100, 2000)
+        _, entries = oggwrite._split_comments(oggwrite._layout(oggwrite.read_pages(out)).comment)
+        self.assertEqual(entries, [b"TITLE=Song", b"ARTIST=Me", b"LOOPSTART=100", b"LOOPLENGTH=2000"])
+        a, b = oggwrite.read_pages(data), oggwrite.read_pages(out)
+        self.assertEqual([p.body for p in a[-3:]], [p.body for p in b[-3:]])
+        self.all_crcs_ok(out)
+
+    def test_audio_pages_are_copied_byte_for_byte_when_the_header_page_count_is_the_same(self):
+        data = synthetic_ogg([b"TITLE=Song"])
+        # ident, comment+setup page: 2 header pages in, 3 out (comment alone, setup) -> pages renumbered
+        out = oggwrite.rewrite_headers(data, 1, 2)
+        self.assertEqual([p.seq for p in oggwrite.read_pages(out)], list(range(6)))
+        self.all_crcs_ok(out)
+        out2 = oggwrite.rewrite_headers(out, 3, 4)             # now the layout is the writer's own
+        self.assertEqual(out2[-300:], out[-300:])              # audio pages not rewritten at all
+
+    def test_digit_quirk_cannot_happen(self):
+        nxt = b"TITLE=" + b"x" * 42                            # a 48-byte comment: its length byte is '0'
+        for comments in ([b"LOOPSTART=1", nxt], [nxt, b"LOOPSTART=1"], [b"LOOPLENGTH=1", nxt]):
+            data = synthetic_ogg(comments)
+            out = oggwrite.rewrite_headers(data, 100, 2000)
+            eng = enginetags.read_engine_tags(out)
+            self.assertEqual((eng.loop_start, eng.loop_length), (100, 2000))
+
+    def test_removing_the_loop(self):
+        data = synthetic_ogg([b"LOOPSTART=1", b"LOOPLENGTH=2", b"TITLE=x"])
+        out = oggwrite.rewrite_headers(data, None, None)
+        oggwrite.verify_written(data, out, None, None)
+        eng = enginetags.read_engine_tags(out)
+        self.assertEqual((eng.loop_start, eng.loop_length), (0, 0))
+
+    def test_bad_values_are_refused(self):
+        data = synthetic_ogg([b"TITLE=x"])
+        for start, length in [(-1, 5), (5, 0), (5, None), (None, 5), (10 ** 15, 5), (1.5, 5), (True, 5)]:
+            with self.subTest(start=start, length=length):
+                with self.assertRaises(oggwrite.OggWriteError):
+                    oggwrite.rewrite_headers(data, start, length)
+
+    def test_files_that_must_not_be_touched(self):
+        with self.assertRaises(oggwrite.OggWriteError) as cm:
+            oggwrite.rewrite_headers((DATA / "big_comment.ogg").read_bytes(), 1, 2)
+        self.assertIn("too big", str(cm.exception))
+        with self.assertRaises(oggwrite.OggWriteError):
+            oggwrite.rewrite_headers((DATA / "opus.ogg").read_bytes(), 1, 2)
+        for junk in (b"", b"not an ogg file at all", (DATA / "loop_tagged.ogg").read_bytes()[:60]):
+            with self.assertRaises(oggwrite.OggWriteError):
+                oggwrite.rewrite_headers(junk, 1, 2)
+
+    def test_verify_catches_damage(self):
+        data = synthetic_ogg([b"TITLE=x"])
+        out = bytearray(oggwrite.rewrite_headers(data, 1, 2))
+        out[-5] ^= 0xFF                                        # a changed audio byte
+        with self.assertRaises(oggwrite.OggWriteError):
+            oggwrite.verify_written(data, bytes(out), 1, 2)
+        good = oggwrite.rewrite_headers(data, 1, 2)
+        with self.assertRaises(oggwrite.OggWriteError):        # the tags are not the ones asked for
+            oggwrite.verify_written(data, good, 5, 6)
+
+    def test_write_loop_tags_leaves_the_source_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = Path(d) / "a.ogg", Path(d) / "b.ogg"
+            shutil.copy(DATA / "loop_tagged.ogg", src)
+            before = src.read_bytes()
+            oggwrite.write_loop_tags(src, dst, 1000, 5000)
+            self.assertEqual(src.read_bytes(), before)
+            tags = oggmeta.loop_tags(oggmeta.read_ogg_info(dst))
+            self.assertEqual((tags.start, tags.length), (1000, 5000))
+
+    @needs_numpy
+    def test_decoded_audio_is_identical(self):
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg is not installed")
+        try:
+            import soundfile
+        except ImportError:
+            self.skipTest("soundfile is not installed")
+        with tempfile.TemporaryDirectory() as d:
+            dst = Path(d) / "b.ogg"
+            oggwrite.write_loop_tags(DATA / "loop_tagged.ogg", dst, 777, 4444)
+            a, ra = soundfile.read(str(DATA / "loop_tagged.ogg"))
+            b, rb = soundfile.read(str(dst))
+            self.assertEqual(ra, rb)
+            np.testing.assert_array_equal(a, b)
+
+
+# --------------------------------------------------------------------------
+class TestLoopEdit(unittest.TestCase):
+    def test_parse_position(self):
+        p = loopedit.parse_position
+        self.assertEqual(p("132300", 44100), 132300)
+        self.assertEqual(p(" 3 s ", 44100), 132300)
+        self.assertEqual(p("3.5", 44100), 154350)
+        self.assertEqual(p("3,5s", 44100), 154350)
+        self.assertEqual(p("1:23.5", 44100), 3682350)
+        self.assertEqual(p("0:03", 44100), 132300)
+        self.assertEqual(p("1:02:03", 48000), (3723) * 48000)
+        self.assertEqual(p("0.00001", 44100), 0)               # rounds to the nearest sample
+        self.assertEqual(p("0.5", 22050), 11025)
+
+    def test_parse_position_errors(self):
+        for bad in ("", "abc", "-1", "-1.5s", "1:", ":5", "1:2:3:4", "1e5s", "1:-5"):
+            with self.subTest(bad):
+                with self.assertRaises(ValueError) as cm:
+                    loopedit.parse_position(bad, 44100)
+                self.assertTrue(str(cm.exception))
+        with self.assertRaises(ValueError):
+            loopedit.parse_position("5", 0)
+
+    @needs_numpy
+    def test_snap_finds_the_nearest_rising_crossing(self):
+        n = 44100
+        t = np.arange(n) / 44100.0
+        sine = np.sin(2 * np.pi * 100 * t).astype(np.float32)[:, None]       # period 441 samples
+        for pos in (1000, 5000, 20000, 33333):
+            k = loopedit.snap_to_zero_crossing(sine, pos, 441)
+            self.assertLessEqual(abs(k - pos), 441 // 2 + 1)
+            self.assertLess(sine[k - 1, 0], 0.0 + 1e-6)                        # below zero before
+            self.assertGreaterEqual(sine[k, 0], 0.0)                           # zero or above at k
+
+    @needs_numpy
+    def test_snap_edge_cases(self):
+        s = np.ones((1000, 2), np.float32)                                     # never crosses zero
+        self.assertEqual(loopedit.snap_to_zero_crossing(s, 500, 100), 500)
+        self.assertEqual(loopedit.snap_to_zero_crossing(s, 500, 0), 500)
+        self.assertEqual(loopedit.snap_to_zero_crossing(np.zeros((1, 1), np.float32), 0, 10), 0)
+        x = np.zeros((100, 1), np.float32)
+        x[:50] = -1.0
+        self.assertEqual(loopedit.snap_to_zero_crossing(x, 30, 40), 50)        # the only crossing
+        self.assertEqual(loopedit.snap_to_zero_crossing(x, 99, 10), 99)        # out of range
+        x2 = -x                                                                 # falling only
+        self.assertEqual(loopedit.snap_to_zero_crossing(x2, 30, 40, rising=True), 30)
+        self.assertEqual(loopedit.snap_to_zero_crossing(x2, 30, 40, rising=False), 50)
+
+    @needs_numpy
+    def test_snap_averages_channels(self):
+        s = np.zeros((100, 2), np.float32)
+        s[:40, 0], s[:40, 1] = -1.0, -0.5          # both negative, then both zero
+        self.assertEqual(loopedit.snap_to_zero_crossing(s, 45, 20), 40)
+
+
+# --------------------------------------------------------------------------
+class TestLoopWrite(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.game = fixture.build(self.tmp / "g")
+        self.ogg = self.game / "audio" / "bgm" / "Theme.ogg"
+        shutil.copy(DATA / "loop_tagged.ogg", self.ogg)       # a real Ogg Vorbis file
+        self.original = self.ogg.read_bytes()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_save_then_undo(self):
+        log = []
+        op = loopwrite.save_loop_tags(self.game, self.ogg, 1234, 5678, log.append)
+        tags = oggmeta.loop_tags(oggmeta.read_ogg_info(self.ogg))
+        self.assertEqual((tags.start, tags.length), (1234, 5678))
+        eng = enginetags.read_engine_tags_from_file(self.ogg)
+        self.assertEqual((eng.loop_start, eng.loop_length), (1234, 5678))
+        self.assertFalse(list(self.ogg.parent.glob("*.loop_tmp")))
+        ev = history.last_undoable(self.game)
+        self.assertEqual((ev["id"], ev["op"], ev["file"]), (op, "loop_tags", "audio/bgm/Theme.ogg"))
+        self.assertEqual(rename_engine.describe_last_undoable(self.game), "loop tags of Theme.ogg")
+        self.assertTrue(rename_engine.undo_last(self.game, log.append))
+        self.assertEqual(self.ogg.read_bytes(), self.original)
+        self.assertIsNone(history.last_undoable(self.game))
+
+    def test_undo_refuses_when_the_file_changed_afterwards(self):
+        loopwrite.save_loop_tags(self.game, self.ogg, 1, 2, lambda *_: None)
+        loopwrite.save_loop_tags(self.game, self.ogg, 3, 4, lambda *_: None)
+        self.assertTrue(rename_engine.undo_last(self.game, lambda *_: None))     # back to 1, 2
+        tags = oggmeta.loop_tags(oggmeta.read_ogg_info(self.ogg))
+        self.assertEqual((tags.start, tags.length), (1, 2))
+        with open(self.ogg, "ab") as f:                                          # edited elsewhere
+            f.write(b"x")
+        msgs = []
+        self.assertFalse(rename_engine.undo_last(self.game, msgs.append))
+        self.assertTrue(any("CANNOT UNDO" in m for m in msgs))
+
+    def test_a_failed_save_changes_nothing(self):
+        self.ogg.write_bytes((DATA / "big_comment.ogg").read_bytes())
+        before = self.ogg.read_bytes()
+        with self.assertRaises(oggwrite.OggWriteError):
+            loopwrite.save_loop_tags(self.game, self.ogg, 1, 2, lambda *_: None)
+        self.assertEqual(self.ogg.read_bytes(), before)
+        self.assertEqual(history.read_history(self.game), [])
+        self.assertFalse(list(self.ogg.parent.glob("*.loop_tmp")))
+        backups = self.game / ".asset_tools" / "backups"
+        self.assertFalse(backups.exists() and any(backups.iterdir()))
+
+    def test_files_outside_the_project_are_refused(self):
+        other = self.tmp / "elsewhere.ogg"
+        shutil.copy(DATA / "loop_tagged.ogg", other)
+        with self.assertRaises(oggwrite.OggWriteError):
+            loopwrite.save_loop_tags(self.game, other, 1, 2, lambda *_: None)
+        self.assertEqual(other.read_bytes(), (DATA / "loop_tagged.ogg").read_bytes())
+
+    def test_removing_the_loop_can_be_undone_too(self):
+        loopwrite.save_loop_tags(self.game, self.ogg, None, None, lambda *_: None)
+        eng = enginetags.read_engine_tags_from_file(self.ogg)
+        self.assertEqual((eng.loop_start, eng.loop_length), (0, 0))
+        self.assertTrue(rename_engine.undo_last(self.game, lambda *_: None))
+        self.assertEqual(self.ogg.read_bytes(), self.original)
 
 
 # --------------------------------------------------------------------------

@@ -448,6 +448,86 @@ def main() -> int:
                 notes.append("tags read: LOOPSTART 22050, LOOPLENGTH 44100")
             s.note = "; ".join(notes)
 
+    with step("loop editor edits and saves tags (on a throw-away copy)") as s:
+        import audiodecode
+        missing = audiodecode.missing_dependencies()
+        if missing:
+            s.note = "SKIPPED: " + " and ".join(missing) + " not installed"
+        else:
+            import numpy as np
+            import soundfile
+            import enginetags
+            import history
+            import loop_editor_gui
+            import oggmeta
+            from rename_engine import describe_last_undoable, undo_last
+
+            lg = tmp / "loop_game"                    # never the user's own project
+            (lg / "audio" / "bgm").mkdir(parents=True)
+            t = np.arange(44100 * 4) / 44100.0
+            wave = (0.3 * np.sin(2 * np.pi * 220 * t)).astype("float32")
+            ogg = lg / "audio" / "bgm" / "EditMe.ogg"
+            soundfile.write(str(ogg), np.column_stack([wave, wave]), 44100, format="OGG", subtype="VORBIS")
+            original = ogg.read_bytes()
+            saved_calls = []
+            d = loop_editor_gui.open_loop_editor(ogg, "EditMe", win, game=lg,
+                                                 on_saved=lambda: saved_calls.append(1))
+            assert d is not None, "the editor did not open"
+            t0 = time.monotonic()
+            while not (d.ready or d.error):
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 30, "decoding did not finish"
+            assert not d.error, d.error
+            assert not d.dirty and not d.btn_save.isEnabled(), "a fresh editor must have nothing to save"
+
+            assert d.set_loop_points(22050, 66150) and d.dirty and d.btn_save.isEnabled()
+            assert d.ed["start"].text() == "22050" and d.ed["length"].text() == "44100", \
+                (d.ed["start"].text(), d.ed["length"].text())
+            d.ed["start"].setText("0.75 s")             # typed seconds: 0.75 * 44100 = 33075
+            d._on_field("start")
+            assert d.loop_points() == (33075, 66150), d.loop_points()
+            assert d.ed["start"].text() == "33075", "the typed value was not shown as samples"
+            d.ed["length"].setText("1:00")             # a minute: past the end of the file, refused
+            d._on_field("length")
+            assert d.loop_points() == (33075, 66150), "a loop beyond the file was accepted"
+            d.view.fit()
+            pump()
+            x = d.view.x_of(33075)
+            assert d.view._marker_at(x) == "start" and d.view._marker_at(x + 3) == "start" \
+                and d.view._marker_at(d.view.x_of(100000)) is None, "marker hit-test"
+            d.chk_snap.setChecked(True)
+            snapped = d._snap(30001)
+            assert abs(snapped - 30001) <= int(44100 * 0.02), snapped
+            if snapped != 30001:
+                chan = d._audio.samples.mean(axis=1)
+                assert chan[snapped - 1] < 0 <= chan[snapped], "snap did not land on a rising zero crossing"
+            d._on_marker_dragged("end", 80000)
+            d._on_marker_released()
+            ls, le = d.loop_points()
+            assert ls == 33075 and abs(le - 80000) <= 882, (ls, le)
+            d.revert()
+            assert not d.dirty and d.loop_points() == (0, d._audio.frames), "Revert did not undo the edit"
+
+            assert d.set_loop_points(22050, 66150)
+            assert d.save_tags(ask=False), "saving failed"
+            assert saved_calls == [1], "the main window was not told"
+            eng = enginetags.read_engine_tags_from_file(ogg)
+            assert (eng.loop_start, eng.loop_length) == (22050, 44100), eng
+            tags = oggmeta.loop_tags(oggmeta.read_ogg_info(ogg))
+            assert (tags.start, tags.length) == (22050, 44100), tags
+            assert not d.dirty and d._loop.status == "complete", d._loop
+            back, rate = soundfile.read(str(ogg))
+            before, _ = soundfile.read(str(lg / ".asset_tools" / "backups"
+                                           / history.last_undoable(lg)["id"] / "data" / "audio" / "bgm" / "EditMe.ogg"))
+            assert rate == 44100 and np.array_equal(back, before), "the sound changed when tags were saved"
+            assert describe_last_undoable(lg) == "loop tags of EditMe.ogg", describe_last_undoable(lg)
+            assert undo_last(lg, lambda *_: None), "undo failed"
+            assert ogg.read_bytes() == original, "undo did not restore the file"
+            d.discard_changes()
+            d.close()
+            s.note = "typed values, snap, drag, revert, save (checked with the game's own reader), undo"
+
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
         if not read_only and pool["n"] == 0:

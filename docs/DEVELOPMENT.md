@@ -37,6 +37,9 @@ call into them. Keep it that way: it is what makes most of the app testable with
 | `health_gui.py`, `gui.py` | windows |
 | `oggmeta.py` | reads an Ogg Vorbis header: sample rate, channels, comment tags, `loop_tags()` (pure Python, read-only) |
 | `enginetags.py` | what RPG Maker MZ's own reader finds in an .ogg (port of `_readLoopComments` / `_readMetaData` / `_onDecode`), read-only |
+| `oggwrite.py` | rewrites only the comment header of an .ogg (CRC, page layout), then `verify_written` (same audio/headers, engine reader finds the tags) |
+| `loopwrite.py` | saves tags safely: backup, temp file, check, replace, history op `loop_tags` (Undo goes through `rename_engine.undo_last`) |
+| `loopedit.py` | typed position parsing (samples / seconds / m:ss), snap to rising zero crossing |
 | `loopmath.py` | which loop is shown/played for the tags found, time formatting, ruler steps |
 | `waveform.py` | min/max pyramid for drawing any zoom level quickly (numpy) |
 | `loopplayback.py` | which samples come next, the exact loop jump, cursor position (numpy) |
@@ -132,11 +135,19 @@ Only MZ 1.0.0 was checked; newer builds of `rmmz_core.js` should be compared.
 stopped at once), so `_Feeder` writes into the device from a 10 ms timer. `playback_report()` prints state,
 error and byte counts for bug reports.
 
+**Loop editor: writing tags.** `oggwrite.py` repaginates only the header pages: the comment packet gets a
+page of its own, the setup header follows, the audio pages are copied byte for byte (renumbered with new CRCs
+only when the header page count changes). Names are upper case, LOOPSTART and LOOPLENGTH are the last comments
+(so the engine's zero-byte-terminated text never swallows a digit), and a comment packet over one page
+(65,024 bytes) is refused because the engine cannot read tags from it. The new file is checked before it is used
+(`verify_written`) and the original is backed up first; Undo reuses the generic history/backups mechanism with
+the file path as the key. Snap is applied only to mouse drags and the cursor buttons, never to typed values.
+
 ## Ideas for later
 
 * **Seam view:** an option to show, at the end of the loop, the waveform of the loop's beginning (after the
   loop-start marker) instead of the file's real "outro", so the join can be judged by eye. (Requested by the user.)
-* Loop editor steps 2 to 4: edit and write the tags (backup + Undo), BPM grid and metronome, loop suggestions.
+* Loop editor steps 3 and 4: BPM grid and metronome, loop suggestions.
 
 ## Conventions
 
