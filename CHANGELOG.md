@@ -18,6 +18,9 @@ All notable changes are listed here. The format follows
   (upper-case names only, LOOPSTART alone ignored, ...); remarks say when the file and the game disagree.
 - `requirements-audio.txt` (numpy, soundfile): needed only by the loop editor. `check_env.py` reports them.
 
+### Fixed
+- Loop editor: moving the cursor or changing "Loop like the game" while playing no longer makes the sound briefly louder (the old audio buffer was playing under the new sound).
+
 ## [1.0.0] - 2026-11-04
 
 First public release.

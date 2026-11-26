@@ -441,6 +441,7 @@ class LoopEditorDialog(QDialog):
         self._io = None
         self._dev = None                  # the _Feeder of the current play run
         self._sink_error = ""
+        self._sink_fmt = None             # (rate, channels) the current sink was made for
         self._run_loop = (0, None)        # loop settings of the current play run
         self._origin = 0                  # where the current play run started
         self._head = 0                    # where the cursor is while stopped or paused
@@ -919,8 +920,16 @@ class LoopEditorDialog(QDialog):
         self.hint.setText(text)
 
     def _start_sink(self, pos: int) -> bool:
-        self._stop_sink()
         audio = self._audio
+        fmt_key = (audio.sample_rate, audio.channels)
+        if self._sink is not None and self._sink_fmt == fmt_key:
+            # Moving the cursor or changing the loop while playing: keep the same sink and only
+            # drop what is still waiting in its buffer. A second sink would play that buffer
+            # (about 0.4 s) on top of the new sound, which is heard as a short burst of loudness.
+            self._timer.stop()
+            self._sink.reset()
+            return self._begin_run(pos)
+        self._stop_sink()
         device = QMediaDevices.defaultAudioOutput()
         if device.isNull():
             self._say("No sound output device was found, so nothing can be played.")
@@ -937,6 +946,12 @@ class LoopEditorDialog(QDialog):
         self._sink = QAudioSink(device, fmt, self)
         self._sink.setVolume(self.volume.value() / 100.0)
         self._sink.setBufferSize(int(audio.sample_rate * audio.channels * 2 * 0.4))     # about 0.4 s
+        self._sink_fmt = fmt_key
+        return self._begin_run(pos)
+
+    def _begin_run(self, pos: int) -> bool:
+        """Start feeding the (new or reset) sink from sample `pos`."""
+        audio = self._audio
         self._dev = _Feeder(audio.samples)
         ls, le = self._loop_args()
         self._run_loop = (ls, le)          # the settings this run really plays with
@@ -965,9 +980,11 @@ class LoopEditorDialog(QDialog):
     def _stop_sink(self) -> None:
         self._timer.stop()
         if self._sink is not None:
+            self._sink.reset()                  # nothing left in the buffer to play after it is gone
             self._sink.stop()
             self._sink.deleteLater()
             self._sink = None
+            self._sink_fmt = None
         self._io = None
         self._dev = None
         self.btn_play.setText("Play")
