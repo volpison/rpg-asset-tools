@@ -280,6 +280,21 @@ helps with that:
   editor; it is not written to the file. A song with a changing tempo needs a different approach (one fixed
   tempo per song for now).
 
+**Suggest loops**
+
+*Suggest loops...* (beside *End = cursor*) compares the song with itself to find places where the music
+repeats, so that the jump from the loop end back to the loop start is hard to hear. It does not need a BPM,
+but it works best on music with a clear beat or a repeating pattern.
+
+* Choose *Find start and end*, or keep the current start (or end) and look for the other point only (within a
+  quarter of a second of where it is now), and set the *Shortest loop*. Press *Search*; it runs in the
+  background and takes a few seconds for a long song.
+* The table lists up to 8 suggestions, best first, with the start, the end, the length (also in bars when the
+  song has a beat grid) and a *Match* percentage: how alike the music, and the waveform right at the jump, are.
+* **Use** puts the chosen points in the editor (nothing is saved until *Save tags...*; *Revert* undoes it).
+  **Use and hear the seam** (or a double-click) also plays the jump. Always listen: it is a suggestion, not
+  a promise. Songs without a repeating part give no suggestions.
+
 **Good to know:** the editor shows the loop the way the game reads it. RPG Maker MZ (checked against
 `js/rmmz_core.js` of version 1.0.0) does not read tags like a standard Vorbis tool does:
 

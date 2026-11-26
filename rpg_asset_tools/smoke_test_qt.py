@@ -639,6 +639,68 @@ def main() -> int:
             d2.close()
             s.note = "grid drawn and saved, snap to beat/bar, loop in bars, BPM from loop, metronome playing, grid restored"
 
+    with step("loop editor suggests loops") as s:
+        import audiodecode
+        missing = audiodecode.missing_dependencies()
+        if missing:
+            s.note = "SKIPPED: " + " and ".join(missing) + " not installed"
+        else:
+            import numpy as np
+            import soundfile
+            import loop_editor_gui
+
+            sg = tmp / "suggest_game"                 # never the user's own project
+            (sg / "audio" / "bgm").mkdir(parents=True)
+            rate = 22050
+            pat = np.zeros(4 * rate)
+            for k, f in enumerate([220, 277, 330, 440, 330, 277, 247, 196]):
+                a = int(k * 0.5 * rate)
+                seg = np.arange(int(0.5 * rate)) / rate
+                pat[a:a + len(seg)] += np.sin(2 * np.pi * f * seg) * np.exp(-seg * 4)
+            rng = np.random.default_rng(1)
+            song = np.concatenate([rng.normal(0, 0.05, 3 * rate), np.tile(pat, 4),
+                                   rng.normal(0, 0.05, 2 * rate)]).astype("float32") * 0.5
+            ogg = sg / "audio" / "bgm" / "Pattern.ogg"
+            soundfile.write(str(ogg), np.column_stack([song, song]), rate, format="OGG", subtype="VORBIS")
+            d = loop_editor_gui.open_loop_editor(ogg, "Pattern", win, game=sg)
+            assert d is not None, "the editor did not open"
+            t0 = time.monotonic()
+            while not (d.ready or d.error):
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 30, "decoding did not finish"
+            assert not d.error, d.error
+            dlg = d.suggest_loops()
+            assert dlg is not None and dlg.isVisible(), "the suggestion window did not open"
+            dlg.spin_min.setValue(3.0)
+            dlg.search()
+            t0 = time.monotonic()
+            while dlg.searching:
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 60, "the search did not finish"
+            assert dlg.candidates and dlg.table.rowCount() == len(dlg.candidates), dlg.status.text()
+            top = dlg.candidates[0]
+            rem = (top.length / rate) % 4.0
+            assert min(rem, 4.0 - rem) < 0.05, top
+            assert dlg.selected() is top, "the best suggestion was not selected"
+            assert dlg.use_selected(hear=False)
+            assert d.loop_points() == (top.start, top.end) and d.dirty, d.loop_points()
+            assert dlg.use_selected(hear=True)
+            pump()
+            assert d.playback_report() is not None
+            d.discard_changes()
+            dlg.cmb_mode.setCurrentIndex(1)           # keep the current start: only that region is searched
+            dlg.search()
+            t0 = time.monotonic()
+            while dlg.searching:
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 60, "the second search did not finish"
+            dlg.close()
+            d.close()
+            s.note = "window opens, search runs in the background, a suggestion is used and heard, nothing saved"
+
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
         if not read_only and pool["n"] == 0:

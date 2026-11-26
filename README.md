@@ -30,7 +30,7 @@ Built for big projects: tested on a game with about 5,600 assets and 1.5 GB of d
 - **Loop editor** (optional, music in Ogg Vorbis): shows the waveform and the loop stored in the file's
   `LOOPSTART` / `LOOPLENGTH` tags, plays it looping the way the game does, and lets you move the loop points (drag, or type samples /
   seconds / minutes:seconds, with snap to zero crossings or to a beat grid) and save them back with a backup
-  and Undo. A BPM grid, a metronome and "loop = N bars" help to find musical loop points.
+  and Undo. A BPM grid, a metronome and "loop = N bars" help to find musical loop points, and "Suggest loops" proposes loop points by finding where the song repeats.
 
   ![Rename window screenshot](screenshots/Rename.png)
   ![Health check window screenshot](screenshots/HealthCheck.png)

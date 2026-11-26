@@ -29,6 +29,8 @@ import enginetags  # noqa: E402
 import fixture  # noqa: E402
 import history  # noqa: E402
 import loopedit  # noqa: E402
+if np is not None:
+    import loopfind  # noqa: E402
 import loopwrite  # noqa: E402
 import rename_engine  # noqa: E402
 import loopmath  # noqa: E402
@@ -980,6 +982,73 @@ class TestAudioDecode(unittest.TestCase):
         self.assertEqual(got.sample_rate, 44100)
         self.assertEqual(got.frames, ref.shape[0])
         self.assertLess(float(np.abs(got.samples - ref).max()), 1e-3)
+
+
+def _pattern_song(rate=22050):
+    """3 s of intro, a 4 s pattern four times, 2 s of outro. Returns (song, rate)."""
+    rng = np.random.default_rng(1)
+    pat = np.zeros(4 * rate)
+    for k, f in enumerate([220, 277, 330, 440, 330, 277, 247, 196]):
+        s0 = int(k * 0.5 * rate)
+        seg = np.arange(int(0.5 * rate)) / rate
+        pat[s0:s0 + len(seg)] += np.sin(2 * np.pi * f * seg) * np.exp(-seg * 4) + 0.3 * np.sin(4 * np.pi * f * seg) * np.exp(-seg * 6)
+    t = np.arange(3 * rate) / rate
+    intro = rng.normal(0, 0.05, 3 * rate) + 0.3 * np.sin(2 * np.pi * 120 * t)
+    outro = rng.normal(0, 0.05, 2 * rate)
+    return np.concatenate([intro, np.tile(pat, 4), outro]).astype(np.float32), rate
+
+
+@needs_numpy
+class TestLoopFind(unittest.TestCase):
+    def test_finds_the_repeating_pattern(self):
+        song, rate = _pattern_song()
+        res = loopfind.find_loops(song, rate, min_length=3.0)
+        self.assertTrue(res)
+        top = res[0]
+        self.assertAlmostEqual((top.length / rate) % 4.0 or 4.0, 4.0, delta=0.02)
+        self.assertGreaterEqual(top.start, 3 * rate - rate // 2)
+        self.assertLessEqual(top.end, 19 * rate + rate // 2)
+        self.assertGreater(top.seam, 0.9)
+        self.assertGreater(top.score, 0.9)
+
+    def test_results_are_sane_and_sorted(self):
+        song, rate = _pattern_song()
+        res = loopfind.find_loops(song, rate, min_length=3.0, count=5)
+        self.assertLessEqual(len(res), 5)
+        for c in res:
+            self.assertTrue(0 <= c.start < c.end <= len(song))
+            self.assertGreaterEqual(c.length, 3.0 * rate * 0.9)
+        keys = [0.5 * c.score + 0.5 * c.seam for c in res]
+        self.assertEqual(keys, sorted(keys, reverse=True))
+
+    def test_fixed_start_keeps_the_start(self):
+        song, rate = _pattern_song()
+        res = loopfind.find_loops(song, rate, min_length=3.0, start_range=(int(6.9 * rate), int(7.1 * rate)))
+        self.assertTrue(res)
+        for c in res:
+            self.assertAlmostEqual(c.start / rate, 7.0, delta=0.2)
+
+    def test_fixed_end_keeps_the_end(self):
+        song, rate = _pattern_song()
+        res = loopfind.find_loops(song, rate, min_length=3.0, end_range=(int(14.9 * rate), int(15.1 * rate)))
+        self.assertTrue(res)
+        for c in res:
+            self.assertAlmostEqual(c.end / rate, 15.0, delta=0.2)
+
+    def test_cancel_returns_nothing(self):
+        song, rate = _pattern_song()
+        self.assertEqual(loopfind.find_loops(song, rate, cancel=lambda: True), [])
+
+    def test_short_and_silent_input(self):
+        self.assertEqual(loopfind.find_loops(np.zeros(5000, np.float32), 22050), [])
+        self.assertEqual(loopfind.find_loops(np.zeros(22050 * 30, np.float32), 22050), [])
+
+    def test_stereo_is_accepted(self):
+        song, rate = _pattern_song()
+        st = np.stack([song, song * 0.5], axis=1)
+        res = loopfind.find_loops(st, rate, min_length=3.0)
+        self.assertTrue(res)
+        self.assertGreater(res[0].seam, 0.9)
 
 
 if __name__ == "__main__":
