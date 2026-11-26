@@ -420,7 +420,7 @@ def main() -> int:
                     time.sleep(0.01)
                 assert dlg._sink is first_sink, "a new sound output was made for a simple restart"
                 assert dlg.is_playing(), "playback stopped after moving the cursor: " + dlg.playback_report()
-                assert 100000 <= dlg._head < 100000 + 44100 // 2, \
+                assert 100000 <= dlg._head < 100000 + 44100 * 3 // 10, \
                     f"the cursor is at {dlg._head} after restarting at 100000: " + dlg.playback_report()
                 dlg.play_seam()
                 pump()
