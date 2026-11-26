@@ -201,8 +201,8 @@ file. Both numbers are counted in **samples** of the file itself (at 44100 Hz, 3
 other files may use 48000 Hz or 22050 Hz, and the editor reads the real rate). The loop ends at
 LOOPSTART + LOOPLENGTH and then jumps back to LOOPSTART.
 
-The loop editor shows these numbers on the waveform and lets you listen to them. **This version only views
-and plays: it never changes the file.** Editing the numbers and saving them back is planned.
+The loop editor shows these numbers on the waveform, lets you listen to them, change them and write them
+back into the file. **Nothing is written until you press *Save tags...*.**
 
 **Open it:** select one BGM or BGS row, then press *Loop editor...* in the details panel, or right-click
 the row. (ME and SE play once, so they have no loop editor.) Only `.ogg` files open; an `.m4a` file or an
@@ -235,6 +235,28 @@ explains what to install.
   Turn it off to play the file once.
 * *From loop start* starts at the loop start. *Hear the seam* starts 3 seconds before the loop end so you
   hear the jump itself: a click or a rhythm slip at the jump means the loop points are not right.
+
+**Changing the loop**
+
+* **Drag** the orange markers at the two ends of the loop bar. With *Snap to zero crossing* on (the default),
+  a marker moves to the nearest place within 20 ms where the sound crosses zero going up; jumping between two
+  such places does not click.
+* Or **type** the numbers in *Loop start*, *Length* or *Loop end*: samples (`132300`), seconds (`3 s` or
+  `3.5`) or minutes:seconds (`1:23.5`). Typed values are used exactly (no snapping). Changing *Loop start*
+  keeps the loop end where it is; changing *Length* moves the end.
+* *Start = cursor* / *End = cursor* put a marker where the cursor is (click the wave to place it). For a
+  file without a loop, the first marker you set creates one.
+* While you edit, *Play*, *From loop start* and *Hear the seam* use the new loop, so you can hear it before
+  saving. *Revert* goes back to what the file holds.
+* **Save tags...** shows the old and the new tags and asks. Then it copies the file to
+  `.asset_tools/backups/`, writes the new tags, checks the result (same sound, same headers, and the values
+  RPG Maker's own reader finds) and only then replaces the file. **Undo** in the main window puts the old
+  file back (it refuses if the file was changed after saving). The sound itself is never changed, only the
+  comment header. Close RPG Maker MZ and the game first so the file is not in use.
+* Both tags are written in upper case, and LOOPSTART and LOOPLENGTH are placed so the game reads them
+  correctly. If a file has a comment block too big for the game (a picture or a long text inside), it is
+  refused with an explanation instead of being changed: nothing would be readable by the game.
+* Closing the window with unsaved changes asks whether to save them.
 
 **Good to know:** the editor shows the loop the way the game reads it. RPG Maker MZ (checked against
 `js/rmmz_core.js` of version 1.0.0) does not read tags like a standard Vorbis tool does:

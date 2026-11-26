@@ -941,7 +941,7 @@ class MainWindow(QMainWindow):
                 "The loop editor needs Qt's multimedia module, which this PySide6 install does not "
                 f"have ({e}).\n\nInstall the full package:   pip install PySide6")
             return
-        dlg = open_loop_editor(aud, a["name"], self)
+        dlg = open_loop_editor(aud, a["name"], self, game=self.game, on_saved=self._update_actions)
         if dlg is not None:
             self._previews = [d for d in self._previews if d.isVisible()] + [dlg]
 

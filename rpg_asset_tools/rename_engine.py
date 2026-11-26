@@ -668,6 +668,8 @@ def undo_last(game_folder: Path, log=print, annotations=None) -> bool:
 def describe_last_undoable_text(e: dict) -> str:
     if e["op"] == "rename":
         return f"rename of {len(e.get('items', []))} asset(s)"
+    if e["op"] == "loop_tags":
+        return f"loop tags of {Path(e.get('file', '?')).name}"
     if e["op"] == "merge":
         return f"merge of {len(e.get('items', []))} duplicate(s)"
     return f"move of {len(e.get('moves', []))} file(s) to _unused/"
