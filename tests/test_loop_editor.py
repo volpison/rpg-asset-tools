@@ -23,6 +23,8 @@ except ImportError:                      # numpy is optional (only the loop edit
     np = None
 
 import audiodecode  # noqa: E402
+import beatgrid  # noqa: E402
+import gridstore  # noqa: E402
 import enginetags  # noqa: E402
 import fixture  # noqa: E402
 import history  # noqa: E402
@@ -35,6 +37,7 @@ import oggwrite  # noqa: E402
 
 if np is not None:
     import loopplayback  # noqa: E402
+    import metronome  # noqa: E402
     import waveform  # noqa: E402
 
 needs_numpy = unittest.skipIf(np is None, "numpy is not installed")
@@ -485,6 +488,191 @@ class TestLoopWrite(unittest.TestCase):
         self.assertEqual((eng.loop_start, eng.loop_length), (0, 0))
         self.assertTrue(rename_engine.undo_last(self.game, lambda *_: None))
         self.assertEqual(self.ogg.read_bytes(), self.original)
+
+
+# --------------------------------------------------------------------------
+class TestBeatGrid(unittest.TestCase):
+    G = beatgrid.Grid(120.0, 1000, 4)                       # a beat every 22050 frames at 44100 Hz
+
+    def test_lengths(self):
+        self.assertEqual(self.G.beat_length(44100), 22050.0)
+        self.assertEqual(self.G.bar_length(44100), 88200.0)
+        self.assertEqual(beatgrid.Grid(100, 0, 3).bar_length(48000), 86400.0)
+
+    def test_beats_in_range(self):
+        beats = beatgrid.beats_in_range(self.G, 44100, 0, 100000)
+        self.assertEqual(beats, [(1000, True), (23050, False), (45100, False), (67150, False), (89200, True)])
+        self.assertEqual(beatgrid.beats_in_range(self.G, 44100, 1001, 23050), [])        # end is exclusive
+        self.assertEqual(beatgrid.beats_in_range(self.G, 44100, 5, 5), [])
+        before = beatgrid.beats_in_range(beatgrid.Grid(120, 50000, 4), 44100, 0, 50000)   # runs backwards too
+        self.assertEqual(before, [(5900, False), (27950, False)])
+
+    def test_downbeat_pattern_with_negative_beats(self):
+        g = beatgrid.Grid(120, 100000, 4)
+        beats = beatgrid.beats_in_range(g, 44100, 0, 100001)
+        self.assertEqual(beats, [(11800, True), (33850, False), (55900, False), (77950, False), (100000, True)])
+
+    def test_nearest_beat_and_bar(self):
+        self.assertEqual(beatgrid.nearest_beat(self.G, 44100, 30000), 23050)
+        self.assertEqual(beatgrid.nearest_beat(self.G, 44100, 40000), 45100)
+        self.assertEqual(beatgrid.nearest_beat(self.G, 44100, 40000, per_bar=True), 1000)
+        self.assertEqual(beatgrid.nearest_beat(self.G, 44100, 60000, per_bar=True), 89200)
+        self.assertEqual(beatgrid.nearest_beat(beatgrid.Grid(120, 30000, 4), 44100, 5), 7950)
+        self.assertEqual(beatgrid.nearest_beat(beatgrid.Grid(120, 100, 4), 44100, 0), 100)   # never before 0
+
+    def test_bars_and_tempo(self):
+        self.assertEqual(beatgrid.bars_to_frames(self.G, 44100, 8), 705600)
+        self.assertEqual(beatgrid.bars_to_frames(self.G, 44100, 0.5), 44100)
+        self.assertAlmostEqual(beatgrid.frames_to_bars(self.G, 44100, 176400), 2.0)
+        self.assertAlmostEqual(beatgrid.bpm_from_loop(705600, 44100, 8, 4), 120.0)
+        self.assertAlmostEqual(beatgrid.bpm_from_loop(1323000, 44100, 8, 4), 64.0)
+        with self.assertRaises(beatgrid.GridError):
+            beatgrid.bpm_from_loop(0, 44100, 8)
+
+    def test_bad_values(self):
+        for args in ((0, 0, 4), (500, 0, 4), (float("nan"), 0, 4), (120, -1, 4), (120, 0, 0), (120, 0, 17)):
+            with self.subTest(args):
+                with self.assertRaises(beatgrid.GridError):
+                    beatgrid.Grid(*args)
+
+    def test_no_drift_over_a_long_song(self):
+        g = beatgrid.Grid(93.7, 12345, 4)                     # a tempo that is not a whole number of frames
+        k = 5000
+        exact = g.offset + k * 60.0 * 44100 / 93.7
+        self.assertAlmostEqual(g.beat_frame(44100, k), exact, places=3)
+        beats = beatgrid.beats_in_range(g, 44100, exact - 10, exact + 10)
+        self.assertEqual(len(beats), 1)
+        self.assertLessEqual(abs(beats[0][0] - exact), 0.5)
+
+
+class TestGridStore(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_round_trip_and_forget(self):
+        self.assertIsNone(gridstore.load_grid(self.tmp, "audio/bgm/A.ogg"))
+        g = beatgrid.Grid(128.5, 22050, 3)
+        gridstore.save_grid(self.tmp, "audio/bgm/A.ogg", g)
+        self.assertEqual(gridstore.load_grid(self.tmp, "audio/bgm/A.ogg"), g)
+        self.assertIsNone(gridstore.load_grid(self.tmp, "audio/bgm/B.ogg"))
+        gridstore.save_grid(self.tmp, "audio/bgm/B.ogg", beatgrid.Grid(90, 0, 4))
+        gridstore.save_grid(self.tmp, "audio/bgm/A.ogg", None)
+        self.assertIsNone(gridstore.load_grid(self.tmp, "audio/bgm/A.ogg"))
+        self.assertEqual(gridstore.load_grid(self.tmp, "audio/bgm/B.ogg").bpm, 90)
+        data = json.loads(gridstore.store_path(self.tmp).read_text(encoding="utf-8"))
+        self.assertEqual((data["file_type"], data["schema_version"], data["min_reader_version"]),
+                         (gridstore.FILE_TYPE, 1, 1))
+
+    def test_unknown_fields_are_kept(self):
+        p = gridstore.store_path(self.tmp)
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"file_type": gridstore.FILE_TYPE, "schema_version": 1, "min_reader_version": 1,
+                                 "future": {"x": 1},
+                                 "grids": {"audio/bgm/A.ogg": {"bpm": 100, "offset": 5, "note": "intro"}}}))
+        gridstore.save_grid(self.tmp, "audio/bgm/A.ogg", beatgrid.Grid(110, 6, 4))
+        data = json.loads(p.read_text(encoding="utf-8"))
+        self.assertEqual(data["future"], {"x": 1})
+        self.assertEqual(data["grids"]["audio/bgm/A.ogg"]["note"], "intro")
+        self.assertEqual(data["grids"]["audio/bgm/A.ogg"]["bpm"], 110)
+
+    def test_newer_or_damaged_files_are_never_overwritten(self):
+        p = gridstore.store_path(self.tmp)
+        p.parent.mkdir(parents=True)
+        for text in ('{"file_type": "%s", "schema_version": 9, "min_reader_version": 9, "grids": {}}' % gridstore.FILE_TYPE,
+                     "not json at all", '{"file_type": "other", "grids": {}}', "[]"):
+            with self.subTest(text[:20]):
+                p.write_text(text)
+                with self.assertRaises(gridstore.GridStoreError):
+                    gridstore.load_grid(self.tmp, "a")
+                with self.assertRaises(gridstore.GridStoreError):
+                    gridstore.save_grid(self.tmp, "a", beatgrid.Grid(100, 0, 4))
+                self.assertEqual(p.read_text(), text)
+
+    def test_a_bad_entry_is_ignored(self):
+        p = gridstore.store_path(self.tmp)
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"file_type": gridstore.FILE_TYPE, "schema_version": 1, "grids": {
+            "a": {"bpm": "fast", "offset": 1}, "b": {"bpm": 1000, "offset": 0}, "c": 5}}))
+        for key in "abc":
+            self.assertIsNone(gridstore.load_grid(self.tmp, key))
+
+
+@needs_numpy
+class TestMetronome(unittest.TestCase):
+    def test_positions_match_render(self):
+        n = 1000
+        samples = np.arange(n, dtype=np.float32)[:, None]
+        for pos, count, ls, le in [(0, 300, 0, None), (950, 300, 0, None), (100, 700, 200, 400),
+                                   (350, 50, 200, 400), (399, 5, 200, 400), (0, 2500, 100, 900), (500, 10, 0, 500)]:
+            with self.subTest(pos=pos, count=count, ls=ls, le=le):
+                chunk, _ = loopplayback.render(samples, pos, count, ls, le)
+                got = loopplayback.positions(pos, count, ls, le, n)
+                np.testing.assert_array_equal(got, chunk[:, 0].astype(np.int64))
+
+    def clicks(self, grid, positions, rate=44100, volume=1.0):
+        m = metronome.Metronome(grid, rate, volume)
+        chunk = np.zeros((len(positions), 2), np.float32)
+        m.mix_into(chunk, positions)
+        return chunk
+
+    @staticmethod
+    def click_starts(chunk):
+        """Indices where a click begins (a click is a burst; its sine crosses zero inside it)."""
+        nz = np.flatnonzero(np.abs(chunk[:, 0]) > 1e-6)
+        if len(nz) == 0:
+            return []
+        return [int(nz[0])] + [int(x) for x, gap in zip(nz[1:], np.diff(nz)) if gap > 100]
+
+    def test_clicks_fall_on_the_beats(self):
+        g = beatgrid.Grid(120, 1000, 4)
+        chunk = self.clicks(g, np.arange(100000))
+        starts = self.click_starts(chunk)
+        self.assertEqual(len(starts), 5)
+        for got, want in zip(starts, [1000, 23050, 45100, 67150, 89200]):
+            self.assertLessEqual(abs(got - want), 3)
+        np.testing.assert_array_equal(chunk[:, 0], chunk[:, 1])               # both channels
+
+    def test_first_beat_of_a_bar_is_louder(self):
+        g = beatgrid.Grid(120, 0, 4)
+        chunk = self.clicks(g, np.arange(4 * 22050))
+        peaks = [float(np.abs(chunk[i * 22050:(i + 1) * 22050]).max()) for i in range(4)]
+        self.assertGreater(peaks[0], peaks[1])
+        self.assertAlmostEqual(peaks[1], peaks[2], places=5)
+
+    def test_clicks_follow_the_loop_jump(self):
+        g = beatgrid.Grid(120, 0, 4)                                          # beats every 22050
+        pos = loopplayback.positions(40000, 60000, 22050, 66150, 100000)       # loops 22050..66150
+        chunk = self.clicks(g, pos)
+        starts = self.click_starts(chunk)
+        got = [int(pos[i]) for i in starts]
+        for g_, want in zip(got, [44100, 22050, 44100]):                       # a click on every pass
+            self.assertLessEqual(abs(g_ - want), 3)
+        self.assertEqual(len(got), 3)
+        self.assertEqual(len(pos), 60000)
+
+    def test_off_and_silent_do_nothing(self):
+        g = beatgrid.Grid(120, 0, 4)
+        m = metronome.Metronome(g, 44100, 0.5)
+        chunk = np.zeros((100, 1), np.float32)
+        m.enabled = False
+        m.mix_into(chunk, np.arange(100))
+        self.assertEqual(float(np.abs(chunk).max()), 0.0)
+        m.enabled, m.volume = True, 0.0
+        m.mix_into(chunk, np.arange(100))
+        self.assertEqual(float(np.abs(chunk).max()), 0.0)
+        m.volume = 0.5
+        m.mix_into(chunk, np.zeros(0, np.int64))                              # an empty chunk is fine
+
+    def test_clicks_are_added_to_the_music(self):
+        g = beatgrid.Grid(120, 0, 4)
+        m = metronome.Metronome(g, 44100, 1.0)
+        chunk = np.full((50, 1), 0.25, np.float32)
+        m.mix_into(chunk, np.arange(50))
+        self.assertNotEqual(float(chunk[10, 0]), 0.25)
+        self.assertEqual(float(chunk[0, 0]), 0.25)                            # the click starts silent
 
 
 # --------------------------------------------------------------------------

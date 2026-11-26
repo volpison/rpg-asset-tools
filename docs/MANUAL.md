@@ -258,6 +258,28 @@ explains what to install.
   refused with an explanation instead of being changed: nothing would be readable by the game.
 * Closing the window with unsaved changes asks whether to save them.
 
+**Beat grid, metronome and loops in bars**
+
+Many songs are made at a fixed tempo, and a good loop is a whole number of bars. The second row of the editor
+helps with that:
+
+* Type the **BPM** and the **First beat** (where beat 1 of a bar falls: samples, seconds or minutes:seconds,
+  or press *First beat = cursor* after clicking the wave on a downbeat). Set *beats per bar* (4 by default).
+  The **Beat grid** is drawn over the wave: thin lines for beats, strong numbered lines for bars. Zoom in on
+  the start of the song to place the first beat exactly. The grid runs backwards from the first beat too.
+* The grid is remembered **for each song** in `.asset_tools/loop_grids.json` in your project (never in the
+  audio file, so RPG Maker does not see it). It is tied to the file's path, so renaming the song forgets it.
+  Clear the BPM box to remove a grid.
+* **Snap to beat / Snap to bar** moves a dragged marker (or *Start/End = cursor*) to the nearest beat or bar
+  line. While it is on it replaces the zero-crossing snap.
+* **Loop length in bars** + *Set loop length* keeps the loop start and sets the end that many bars later
+  (use a start on a bar line). *BPM from loop* does the opposite: if you know the loop is, say, 8 bars long, it
+  works out the BPM from the loop length and puts the first beat at the loop start.
+* **Metronome** adds a click on every beat (higher and louder on the first beat of a bar). It is mixed into
+  the sound itself, so it stays exactly in time with the music and with the loop jump. It only plays in the
+  editor; it is not written to the file. A song with a changing tempo needs a different approach (one fixed
+  tempo per song for now).
+
 **Good to know:** the editor shows the loop the way the game reads it. RPG Maker MZ (checked against
 `js/rmmz_core.js` of version 1.0.0) does not read tags like a standard Vorbis tool does:
 

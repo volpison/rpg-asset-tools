@@ -538,6 +538,107 @@ def main() -> int:
             d.close()
             s.note = "typed values, snap, drag, revert, save (checked with the game's own reader), undo"
 
+    with step("loop editor beat grid, metronome and bars") as s:
+        import audiodecode
+        missing = audiodecode.missing_dependencies()
+        if missing:
+            s.note = "SKIPPED: " + " and ".join(missing) + " not installed"
+        else:
+            import numpy as np
+            import soundfile
+            import beatgrid
+            import gridstore
+            import loop_editor_gui
+
+            gg = tmp / "grid_game"                    # never the user's own project
+            (gg / "audio" / "bgm").mkdir(parents=True)
+            t = np.arange(44100 * 4) / 44100.0
+            wave = (0.3 * np.sin(2 * np.pi * 220 * t)).astype("float32")
+            ogg = gg / "audio" / "bgm" / "Beat.ogg"
+            soundfile.write(str(ogg), np.column_stack([wave, wave]), 44100, format="OGG", subtype="VORBIS")
+
+            def open_editor():
+                d = loop_editor_gui.open_loop_editor(ogg, "Beat", win, game=gg)
+                assert d is not None, "the editor did not open"
+                t0 = time.monotonic()
+                while not (d.ready or d.error):
+                    APP.processEvents()
+                    time.sleep(0.01)
+                    assert time.monotonic() - t0 < 30, "decoding did not finish"
+                assert not d.error, d.error
+                return d
+
+            d = open_editor()
+            assert d.grid is None and not d.chk_metro.isEnabled(), "a fresh song must have no grid"
+            d.view.fit()
+            pump()
+            before = d.view.grab().toImage()
+            d.ed_bpm.setText("120")
+            d.ed_offset.setText("0")
+            d._on_grid_fields()
+            assert d.grid == beatgrid.Grid(120.0, 0, 4), d.grid
+            assert d.chk_grid.isChecked() and d.chk_metro.isEnabled()
+            pump()
+            assert d.view.grab().toImage() != before, "the beat grid was not drawn"
+            saved = gridstore.load_grid(gg, "audio/bgm/Beat.ogg")
+            assert saved == d.grid, saved
+
+            d.ed_bpm.setText("abc")                    # nonsense is refused and the grid stays
+            d._on_grid_fields()
+            assert d.grid == beatgrid.Grid(120.0, 0, 4) and d.ed_bpm.text() == "120", d.ed_bpm.text()
+            d.ed_bpm.setText("1000")
+            d._on_grid_fields()
+            assert d.grid.bpm == 120.0, "a tempo of 1000 BPM was accepted"
+
+            d.cmb_gridsnap.setCurrentIndex(1)           # beat: 22050 frames apart
+            assert d._snap(30000) == 22050 and d._snap(40000) == 44100, (d._snap(30000), d._snap(40000))
+            d.cmb_gridsnap.setCurrentIndex(2)           # bar: 88200 frames apart
+            assert d._snap(30000) == 0 and d._snap(60000) == 88200, (d._snap(30000), d._snap(60000))
+            d.cmb_gridsnap.setCurrentIndex(0)
+
+            assert d.set_loop_points(22050, 44100)
+            d.spin_bars.setValue(1.0)
+            d._apply_bars()
+            assert d.loop_points() == (22050, 22050 + 88200), d.loop_points()
+            d.spin_bars.setValue(8.0)                   # 8 bars = 705600 frames: beyond this 4 s file
+            d._apply_bars()
+            assert d.loop_points() == (22050, 22050 + 88200), "a loop beyond the file was accepted"
+
+            assert d.set_loop_points(0, 88200)
+            d.spin_bars.setValue(2.0)
+            d._bpm_from_loop()                          # 2 bars in 2 s at 4 beats = 240 BPM
+            assert d.grid.bpm == 240.0 and d.grid.offset == 0, d.grid
+
+            d.view.set_cursor(0)
+            d._head = 30000
+            d._offset_from_cursor()
+            assert d.grid.offset == 30000 and d.grid.bpm == 240.0, d.grid
+
+            d.chk_metro.setChecked(True)
+            assert d.play(0), "playback did not start: " + d.hint.text()
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 0.4:
+                APP.processEvents()
+                time.sleep(0.01)
+            assert d.is_playing(), "playback stopped with the metronome on: " + d.playback_report()
+            assert d._dev.metronome is d._metro and d._metro.active, "the metronome is not in the sound"
+            d.chk_metro.setChecked(False)
+            APP.processEvents()
+            assert not d._metro.active
+            d.stop()
+            d.discard_changes()
+            d.close()
+
+            d2 = open_editor()                          # the grid comes back when the song is opened again
+            assert d2.grid == beatgrid.Grid(240.0, 30000, 4), d2.grid
+            assert d2.ed_bpm.text() == "240" and d2.ed_offset.text() == "30000", (d2.ed_bpm.text(), d2.ed_offset.text())
+            d2.ed_bpm.setText("")                       # clearing the BPM forgets the grid
+            d2._on_grid_fields()
+            assert d2.grid is None and gridstore.load_grid(gg, "audio/bgm/Beat.ogg") is None
+            d2.discard_changes()
+            d2.close()
+            s.note = "grid drawn and saved, snap to beat/bar, loop in bars, BPM from loop, metronome playing, grid restored"
+
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
         if not read_only and pool["n"] == 0:

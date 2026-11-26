@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CORE_MODULES = [
     "asset_paths", "system_defaults", "refs", "plugin_refs", "jsonio", "scanner",
     "annotations", "history", "index", "rename_engine", "duplicates", "lint",
-    "deploy", "health", "batch_tools", "oggmeta", "enginetags", "oggwrite", "loopwrite", "loopedit", "loopmath", "audiodecode",
+    "deploy", "health", "batch_tools", "oggmeta", "enginetags", "oggwrite", "loopwrite", "loopedit", "beatgrid", "gridstore", "loopmath", "audiodecode",
 ]
 # Modules that import PySide6
 GUI_MODULES = ["image_preview", "audio_preview", "health_gui", "gui"]
