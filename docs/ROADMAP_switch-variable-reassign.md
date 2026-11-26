@@ -90,7 +90,7 @@ Because of that, the feature is built in strict phases. **No write happens until
 ## Success criteria for merging the write path
 
 1. Unit tests cover: map page condition, control switch, conditional branch, common event, troop, script literal, text code.\V.
-2. Dry-run on a real project (e.g. FemU0 copy) produces a reviewable list with zero crashes.
+2. Dry-run on a real project (e.g. AdventureGameRPG copy) produces a reviewable list with zero crashes.
 3. Apply + undo on a disposable copy leaves the project loadable in RPG Maker MZ and in-game progress flags behaving as expected for the remapped ID.
 4. Dynamic / non-literal references are never modified; they only appear as warnings.
 
