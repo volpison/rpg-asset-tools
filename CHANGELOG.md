@@ -7,6 +7,10 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Loop editor, step 3 (beat grid and metronome): type the BPM and the first beat (or place it at the cursor) to
+  draw beat and bar lines over the wave, snap markers to beats or bars, set the loop length in bars, work out
+  the BPM from a loop of known length, and hear a metronome click that stays in time with the music and the
+  loop jump. The grid is remembered per song in `.asset_tools/loop_grids.json`, not in the audio file.
 - Loop editor, step 2 (edit and save): drag the loop markers or type LOOPSTART / LOOPLENGTH (samples, seconds
   or minutes:seconds), optionally snapping to zero crossings, hear the result, then *Save tags...*. The file is
   backed up first, only its comment header is rewritten (the sound is untouched), the result is checked with the

@@ -45,6 +45,29 @@ def render(samples: np.ndarray, pos: int, n: int,
     return out[:filled], pos
 
 
+def positions(pos: int, n: int, loop_start: int, loop_end: int | None, total: int) -> np.ndarray:
+    """The file position of each of the `n` samples `render` returns from `pos` (so something
+    that depends on the position, like the metronome, can be added to the chunk). Its length is
+    shorter than `n` at the end of the file when there is no loop, exactly like `render`."""
+    _check(total, loop_start, loop_end)
+    out = np.empty(n, dtype=np.int64)
+    filled = 0
+    limit = total if loop_end is None else loop_end
+    if loop_end is not None and pos >= loop_end:
+        pos = loop_start
+    pos = max(0, pos)
+    while filled < n:
+        take = min(n - filled, limit - pos)
+        if take <= 0:
+            break
+        out[filled:filled + take] = np.arange(pos, pos + take)
+        filled += take
+        pos += take
+        if loop_end is not None and pos >= loop_end:
+            pos = loop_start
+    return out[:filled]
+
+
 def advance(pos: int, played: int, total: int, loop_start: int, loop_end: int | None) -> int:
     """Where the play cursor is `played` samples after position `pos` (for drawing the cursor)."""
     _check(total, loop_start, loop_end)

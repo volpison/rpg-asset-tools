@@ -40,6 +40,9 @@ call into them. Keep it that way: it is what makes most of the app testable with
 | `oggwrite.py` | rewrites only the comment header of an .ogg (CRC, page layout), then `verify_written` (same audio/headers, engine reader finds the tags) |
 | `loopwrite.py` | saves tags safely: backup, temp file, check, replace, history op `loop_tags` (Undo goes through `rename_engine.undo_last`) |
 | `loopedit.py` | typed position parsing (samples / seconds / m:ss), snap to rising zero crossing |
+| `beatgrid.py` | `Grid` (BPM, offset, beats per bar): beat/bar frames, nearest beat, bars <-> frames, BPM from a loop (pure) |
+| `gridstore.py` | per-song grids in `.asset_tools/loop_grids.json` (versioned, keeps unknown fields, refuses newer/damaged files) |
+| `metronome.py` | click sound added into the playback buffer by file position (numpy) |
 | `loopmath.py` | which loop is shown/played for the tags found, time formatting, ruler steps |
 | `waveform.py` | min/max pyramid for drawing any zoom level quickly (numpy) |
 | `loopplayback.py` | which samples come next, the exact loop jump, cursor position (numpy) |
@@ -143,11 +146,19 @@ only when the header page count changes). Names are upper case, LOOPSTART and LO
 (`verify_written`) and the original is backed up first; Undo reuses the generic history/backups mechanism with
 the file path as the key. Snap is applied only to mouse drags and the cursor buttons, never to typed values.
 
+**Loop editor: beat grid and metronome.** The grid is a fixed tempo (floats, never rounded to whole frames
+per beat, so it does not drift over a long song) plus an offset. It is stored beside the project's other
+tool data (`.asset_tools/loop_grids.json`, schema_version 1), not in the .ogg: RPG Maker ignores unknown
+tags but other tools might not, and the grid is an editing aid, not part of the song. The metronome is mixed
+into the same PCM chunk as the music using `loopplayback.positions()` (the file position of each output
+sample), so it follows the loop jump exactly and needs no second timer. Left out: tempo changes, tap tempo,
+automatic BPM detection.
+
 ## Ideas for later
 
 * **Seam view:** an option to show, at the end of the loop, the waveform of the loop's beginning (after the
   loop-start marker) instead of the file's real "outro", so the join can be judged by eye. (Requested by the user.)
-* Loop editor steps 3 and 4: BPM grid and metronome, loop suggestions.
+* Loop editor step 4: loop-point suggestions (self-comparison); tap tempo / BPM detection; a grid per section for songs that change tempo.
 
 ## Conventions
 

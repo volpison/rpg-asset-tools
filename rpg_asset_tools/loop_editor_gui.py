@@ -24,12 +24,14 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen, QPolygonF
 from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QScrollBar, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QScrollBar, QSizePolicy, QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
 
 import audiodecode
+import beatgrid
 import enginetags
+import gridstore
 import loopedit
 import loopmath
 import loopwrite
@@ -41,6 +43,7 @@ _BAR_H = 18
 _LOOP_COLOR = QColor(255, 150, 30)
 _NONE_COLOR = QColor(130, 130, 130)
 _CURSOR_COLOR = QColor(230, 60, 60)
+_GRID_COLOR = QColor(70, 140, 220)
 _GRAB_PX = 7                          # how close the mouse must be to grab a loop marker
 _BUFFER_SECONDS = 0.15              # sound buffered in the output: short, so a restart is heard at once
 _SNAP_SECONDS = 0.02                  # how far (each way) a marker may move to reach a zero crossing
@@ -101,6 +104,7 @@ class _Feeder:
         self.finished = False             # a play-once run has handed over its last sample
         self.fed = 0                      # bytes given to the device (for the report)
         self.feeds = 0
+        self.metronome = None             # a metronome.Metronome whose clicks are added, or None
 
     def configure(self, pos: int, loop_start: int, loop_end) -> None:
         self._pos, self._loop_start, self._loop_end = pos, loop_start, loop_end
@@ -120,8 +124,12 @@ class _Feeder:
                 return
         while free_bytes >= frame_bytes and not self.finished:
             n = min(free_bytes // frame_bytes, self.MAX_FRAMES)
+            first = self._pos
             chunk, self._pos = loopplayback.render(
                 self._samples, self._pos, n, self._loop_start, self._loop_end)
+            if self.metronome is not None and self.metronome.active and len(chunk):
+                self.metronome.mix_into(chunk, loopplayback.positions(
+                    first, len(chunk), self._loop_start, self._loop_end, self._samples.shape[0]))
             if len(chunk) < n:
                 self.finished = True
             if len(chunk) == 0:
@@ -160,6 +168,7 @@ class WaveformView(QWidget):
         self._span = 1.0
         self._cursor = None
         self._hover = -1
+        self._grid = None                 # a beatgrid.Grid to draw, or None
         self._editable = False
         self._drag = None                 # "start" / "end" while a marker is being dragged
         self._message = "Reading the sound..."
@@ -170,6 +179,10 @@ class WaveformView(QWidget):
         self._pyr = None
         self._loop = None
         self._cursor = None
+        self.update()
+
+    def set_grid(self, grid) -> None:
+        self._grid = grid
         self.update()
 
     def set_editable(self, on: bool) -> None:
@@ -313,6 +326,7 @@ class WaveformView(QWidget):
         mid = wave_top + wave_h / 2
         self._paint_loop_region(p, w, wave_top, wave_h)
         self._paint_wave(p, w, wave_top, wave_h, mid, pal)
+        self._paint_grid(p, w, wave_top, wave_h, text_color)
         self._paint_ruler(p, w, text_color)
         self._paint_loop_bar(p, w)
         if self._hover >= 0:
@@ -364,6 +378,33 @@ class WaveformView(QWidget):
             if lo[x] == 0 and hi[x] == 0:
                 continue                                     # silence or outside the audio
             p.drawLine(QPointF(x + 0.5, a), QPointF(x + 0.5, max(b, a + 1)))
+
+    def _paint_grid(self, p, w, top, height, text_color):
+        """Beat lines (thin) and bar lines (strong, numbered) over the wave."""
+        grid = self._grid
+        if grid is None or self._span <= 0:
+            return
+        rate, start, span = self._rate, self._start, self._span
+        beat_px = grid.beat_length(rate) / span * w
+        if span / grid.beat_length(rate) > 4000:
+            return                                           # far too many lines to be useful
+        bar_px = beat_px * grid.beats_per_bar
+        beat_color, bar_color = QColor(_GRID_COLOR), QColor(_GRID_COLOR)
+        beat_color.setAlpha(70)
+        bar_color.setAlpha(170)
+        bar_len = grid.bar_length(rate)
+        for frame, first in beatgrid.beats_in_range(grid, rate, start, start + span):
+            if not first and beat_px < 5:
+                continue
+            if first and bar_px < 4:
+                continue
+            x = self.x_of(frame)
+            p.setPen(QPen(bar_color if first else beat_color, 1.5 if first else 1))
+            p.drawLine(QPointF(x, top), QPointF(x, top + height))
+            if first and bar_px >= 40:
+                number = round((frame - grid.offset) / bar_len) + 1
+                p.setPen(QPen(text_color, 1))
+                p.drawText(QPointF(x + 3, top + 11), str(number))
 
     def _paint_ruler(self, p, w, text_color):
         rate, start, span = self._rate, self._start, self._span
@@ -455,6 +496,9 @@ class LoopEditorDialog(QDialog):
         self._saved = None                            # (start, length) the file has now, None = no loop
         self._edit = None                             # (start, length) being edited, None = not edited
         self._discard = False
+        self._grid = None                             # the beat grid (beatgrid.Grid) or None
+        self._metro = None                            # metronome.Metronome, made when a grid exists
+        self._grid_warned = False
 
         lay = QVBoxLayout(self)
         head = QLabel(f"<b>{escape(title)}</b><br>{escape(self._path.name)} &nbsp;-&nbsp; "
@@ -568,6 +612,78 @@ class LoopEditorDialog(QDialog):
         edit.addWidget(self.btn_save)
         lay.addLayout(edit)
 
+        beat = QHBoxLayout()
+        self.chk_grid = QCheckBox("Beat grid")
+        self.chk_grid.setToolTip("Draw beat lines (thin) and bar lines (strong, numbered) over the wave.")
+        self.chk_grid.toggled.connect(lambda _on: self._apply_grid_view())
+        beat.addWidget(self.chk_grid)
+        beat.addWidget(QLabel("BPM:"))
+        self.ed_bpm = QLineEdit()
+        self.ed_bpm.setFixedWidth(70)
+        self.ed_bpm.setToolTip("The tempo of the song (one fixed tempo). Saved for this song in the project's "
+                               ".asset_tools folder, never in the audio file.")
+        self.ed_bpm.editingFinished.connect(self._on_grid_fields)
+        beat.addWidget(self.ed_bpm)
+        beat.addWidget(QLabel("First beat:"))
+        self.ed_offset = QLineEdit()
+        self.ed_offset.setFont(mono)
+        self.ed_offset.setFixedWidth(100)
+        self.ed_offset.setPlaceholderText("0")
+        self.ed_offset.setToolTip("Where beat 1 of a bar falls: samples, seconds or minutes:seconds. "
+                                  "The grid runs both ways from it.")
+        self.ed_offset.editingFinished.connect(self._on_grid_fields)
+        beat.addWidget(self.ed_offset)
+        self.btn_offset_cursor = QPushButton("First beat = cursor")
+        self.btn_offset_cursor.setToolTip("Put the first beat at the cursor (click the wave to place it).")
+        self.btn_offset_cursor.clicked.connect(lambda _c=False: self._offset_from_cursor())
+        beat.addWidget(self.btn_offset_cursor)
+        self.spin_bpb = QSpinBox()
+        self.spin_bpb.setRange(1, beatgrid.MAX_BEATS_PER_BAR)
+        self.spin_bpb.setValue(4)
+        self.spin_bpb.setSuffix(" beats per bar")
+        self.spin_bpb.valueChanged.connect(lambda _v: self._on_grid_fields())
+        beat.addWidget(self.spin_bpb)
+        self.cmb_gridsnap = QComboBox()
+        self.cmb_gridsnap.addItems(["No snap to grid", "Snap to beat", "Snap to bar"])
+        self.cmb_gridsnap.setToolTip("When you drag a marker or use Start/End = cursor, move it to the nearest "
+                                     "beat or bar line. This replaces the zero-crossing snap while it is on.")
+        beat.addWidget(self.cmb_gridsnap)
+        self.chk_metro = QCheckBox("Metronome")
+        self.chk_metro.setToolTip("A click on every beat (higher on the first beat of a bar), exactly in time "
+                                  "with the music and with the loop jump. Needs a BPM.")
+        self.chk_metro.toggled.connect(lambda _on: self._update_metronome())
+        beat.addWidget(self.chk_metro)
+        self.sl_metro = QSlider(Qt.Horizontal)
+        self.sl_metro.setRange(0, 100)
+        self.sl_metro.setValue(50)
+        self.sl_metro.setFixedWidth(70)
+        self.sl_metro.setToolTip("Metronome volume")
+        self.sl_metro.valueChanged.connect(lambda _v: self._update_metronome())
+        beat.addWidget(self.sl_metro)
+        beat.addStretch(1)
+        lay.addLayout(beat)
+
+        bars = QHBoxLayout()
+        bars.addWidget(QLabel("Loop length in bars:"))
+        self.spin_bars = QDoubleSpinBox()
+        self.spin_bars.setRange(0.25, 1024.0)
+        self.spin_bars.setDecimals(2)
+        self.spin_bars.setSingleStep(1.0)
+        self.spin_bars.setValue(8.0)
+        bars.addWidget(self.spin_bars)
+        self.btn_bars = QPushButton("Set loop length")
+        self.btn_bars.setToolTip("Make the loop this many bars long, keeping the loop start "
+                                 "(needs a BPM). Move the start to a bar line first for a musical loop.")
+        self.btn_bars.clicked.connect(lambda _c=False: self._apply_bars())
+        bars.addWidget(self.btn_bars)
+        self.btn_bpm_from_loop = QPushButton("BPM from loop")
+        self.btn_bpm_from_loop.setToolTip("If you know the loop is this many bars long: work out the BPM "
+                                          "from the loop length and put the first beat at the loop start.")
+        self.btn_bpm_from_loop.clicked.connect(lambda _c=False: self._bpm_from_loop())
+        bars.addWidget(self.btn_bpm_from_loop)
+        bars.addStretch(1)
+        lay.addLayout(bars)
+
         self.notes = QLabel("")
         self.notes.setWordWrap(True)
         lay.addWidget(self.notes)
@@ -613,6 +729,7 @@ class LoopEditorDialog(QDialog):
         self.notes.setText("\n".join(notes))
         self._saved = self._saved_pair()
         self.view.set_editable(True)
+        self._load_saved_grid()
         self._set_controls_enabled(True)
         self._refresh_edit_ui()
         self._sync_scroll()
@@ -628,8 +745,11 @@ class LoopEditorDialog(QDialog):
     def _set_controls_enabled(self, on: bool) -> None:
         for wdg in (self.btn_play, self.btn_stop, self.btn_from_loop, self.btn_seam,
                     self.chk_loop, self.volume, self.scroll, *self.zoom_btns,
-                    self.btn_set_start, self.btn_set_end, self.chk_snap, *self.ed.values()):
+                    self.btn_set_start, self.btn_set_end, self.chk_snap, *self.ed.values(),
+                    self.chk_grid, self.ed_bpm, self.ed_offset, self.btn_offset_cursor, self.spin_bpb,
+                    self.cmb_gridsnap, self.spin_bars, self.btn_bars, self.btn_bpm_from_loop):
             wdg.setEnabled(on)
+        self._update_metronome()
         if not on:
             self.btn_save.setEnabled(False)
             self.btn_revert.setEnabled(False)
@@ -653,6 +773,158 @@ class LoopEditorDialog(QDialog):
 
     def _fmt_pos(self, frame: int) -> str:
         return f"{frame}  ({loopmath.format_time(frame, self._info.sample_rate)})"
+
+    # ----- the beat grid and the metronome
+    @property
+    def grid(self):
+        return self._grid
+
+    def _rel_path(self):
+        """The song's path inside the project (the key the grid is saved under), or None."""
+        if self._game is None:
+            return None
+        try:
+            return self._path.resolve().relative_to(self._game.resolve()).as_posix()
+        except ValueError:
+            return None
+
+    def _load_saved_grid(self) -> None:
+        rel = self._rel_path()
+        if rel is None:
+            return
+        try:
+            grid = gridstore.load_grid(self._game, rel)
+        except gridstore.GridStoreError as e:
+            self._grid_warned = True
+            self.notes.setText((self.notes.text() + "\n" + str(e)).strip())
+            return
+        if grid is not None:
+            self.chk_grid.setChecked(True)
+            self.set_grid(grid, save=False)
+
+    def set_grid(self, grid, save: bool = True) -> None:
+        """Use this beat grid (None removes it) and remember it for this song."""
+        self._grid = grid
+        self._sync_grid_fields()
+        self._apply_grid_view()
+        self._update_metronome()
+        if save:
+            rel = self._rel_path()
+            if rel is not None:
+                try:
+                    gridstore.save_grid(self._game, rel, grid)
+                except gridstore.GridStoreError as e:
+                    if not self._grid_warned:
+                        self._grid_warned = True
+                        QMessageBox.warning(self, "Beat grid", str(e))
+
+    def _sync_grid_fields(self) -> None:
+        g = self._grid
+        for box in (self.ed_bpm, self.ed_offset, self.spin_bpb):
+            box.blockSignals(True)
+        self.ed_bpm.setText("" if g is None else f"{g.bpm:g}")
+        self.ed_offset.setText("" if g is None else str(g.offset))
+        if g is not None:
+            self.spin_bpb.setValue(g.beats_per_bar)
+        for box in (self.ed_bpm, self.ed_offset, self.spin_bpb):
+            box.blockSignals(False)
+
+    def _apply_grid_view(self) -> None:
+        self.view.set_grid(self._grid if self.chk_grid.isChecked() else None)
+
+    def _on_grid_fields(self) -> None:
+        """BPM, first beat or beats per bar was changed by the user."""
+        if not self.ready:
+            return
+        text = self.ed_bpm.text().strip().replace(",", ".")
+        if not text:
+            self.set_grid(None)
+            return
+        try:
+            bpm = float(text)
+        except ValueError:
+            self._problem(f"'{text}' is not a tempo. Type the BPM as a number, for example 120.")
+            self._sync_grid_fields()
+            return
+        try:
+            offset = (loopedit.parse_position(self.ed_offset.text(), self._info.sample_rate)
+                      if self.ed_offset.text().strip() else 0)
+            grid = beatgrid.Grid(bpm, offset, self.spin_bpb.value())
+        except ValueError as ex:                             # GridError is a ValueError too
+            self._problem(str(ex))
+            self._sync_grid_fields()
+            return
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText(self._HINT)
+        self.chk_grid.setChecked(True)
+        self.set_grid(grid)
+
+    def _offset_from_cursor(self) -> None:
+        if not self.ready:
+            return
+        if self._grid is None:
+            self._problem("Type the BPM first, then place the first beat.")
+            return
+        g = self._grid
+        self.set_grid(beatgrid.Grid(g.bpm, self._head, g.beats_per_bar))
+
+    def _update_metronome(self) -> None:
+        have = self._grid is not None and self._audio is not None
+        self.chk_metro.setEnabled(have)
+        self.sl_metro.setEnabled(have)
+        if not have:
+            self._metro = None
+            if self._dev is not None:
+                self._dev.metronome = None
+            return
+        if self._metro is None:
+            import metronome
+            self._metro = metronome.Metronome(self._grid, self._audio.sample_rate)
+        self._metro.grid = self._grid
+        self._metro.enabled = self.chk_metro.isChecked()
+        self._metro.volume = self.sl_metro.value() / 100.0
+        if self._dev is not None:
+            self._dev.metronome = self._metro
+
+    def _apply_bars(self) -> None:
+        if not self.ready:
+            return
+        if self._grid is None:
+            self._problem("Type the BPM first (or use 'BPM from loop').")
+            return
+        s, _e = self._current_or_whole()
+        length = beatgrid.bars_to_frames(self._grid, self._info.sample_rate, self.spin_bars.value())
+        if length <= 0 or s + length > self._audio.frames:
+            self._problem(f"{self.spin_bars.value():g} bars from sample {s} would end after the end of the file.")
+            return
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText(self._HINT)
+        if self.set_loop_points(s, s + length):
+            self._restart_if_playing()
+
+    def _bpm_from_loop(self) -> None:
+        if not self.ready:
+            return
+        if self._loop.status == loopmath.NONE and self._edit is None:
+            self._problem("Set a loop first (drag the markers or type its start and end).")
+            return
+        s, e = self._current_or_whole()
+        try:
+            bpm = beatgrid.bpm_from_loop(e - s, self._info.sample_rate, self.spin_bars.value(),
+                                         self.spin_bpb.value())
+        except beatgrid.GridError as ex:
+            self._problem(str(ex))
+            return
+        try:
+            grid = beatgrid.Grid(round(bpm, 3), s, self.spin_bpb.value())
+        except beatgrid.GridError:
+            self._problem(f"A loop of {self.spin_bars.value():g} bars would mean {bpm:.1f} BPM, which is "
+                          "not a usable tempo. Check the number of bars.")
+            return
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText(self._HINT)
+        self.chk_grid.setChecked(True)
+        self.set_grid(grid)
 
     # ----- editing the loop
     def _saved_pair(self):
@@ -689,7 +961,13 @@ class LoopEditorDialog(QDialog):
         self.hint.setTextFormat(Qt.RichText)
 
     def _snap(self, frame: int) -> int:
-        if not self.chk_snap.isChecked() or self._audio is None:
+        if self._audio is None:
+            return frame
+        if self._grid is not None and self.cmb_gridsnap.currentIndex() > 0:
+            near = beatgrid.nearest_beat(self._grid, self._audio.sample_rate, frame,
+                                         per_bar=self.cmb_gridsnap.currentIndex() == 2)
+            return min(near, self._audio.frames)
+        if not self.chk_snap.isChecked():
             return frame
         return loopedit.snap_to_zero_crossing(
             self._audio.samples, frame, int(self._audio.sample_rate * _SNAP_SECONDS))
@@ -959,6 +1237,7 @@ class LoopEditorDialog(QDialog):
         gets the new sound written after the old one)."""
         audio = self._audio
         self._dev = _Feeder(audio.samples)
+        self._dev.metronome = self._metro
         ls, le = self._loop_args()
         self._run_loop = (ls, le)          # the settings this run really plays with
         self._dev.configure(pos, ls, le)
@@ -1100,6 +1379,7 @@ class LoopEditorDialog(QDialog):
         self._shut = True                 # a late decode result is ignored from now on
         self._stop_sink()
         self.ready = False
+        self._metro = None
         self._audio = None                # a closed window is only hidden; do not keep the song in memory
         self.view.release()
 
