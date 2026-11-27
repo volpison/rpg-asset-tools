@@ -45,6 +45,38 @@ def render(samples: np.ndarray, pos: int, n: int,
     return out[:filled], pos
 
 
+def render_rate(samples: np.ndarray, pos: float, n: int, loop_start: int, loop_end: int | None,
+                rate: float) -> tuple[np.ndarray, float, np.ndarray]:
+    """Like `render`, but stepping `rate` file samples per output sample (1.5 = a fifth higher and faster),
+    with linear interpolation between samples. `pos` and the returned position are fractional.
+    Also returns the file position of each output sample (for the metronome). The loop jump is exact:
+    the first output sample at or after the loop end reads from the loop start."""
+    total = samples.shape[0]
+    _check(total, loop_start, loop_end)
+    pos = float(pos)
+    if loop_end is not None and pos >= loop_end:
+        pos = float(loop_start)
+    pos = max(0.0, pos)
+    idx = pos + rate * np.arange(n, dtype=np.float64)
+    if loop_end is None:
+        idx = idx[idx <= total - 1]                     # increasing: what remains is the readable start
+        new_pos = pos + rate * len(idx)
+        i0 = np.floor(idx).astype(np.int64)
+        i1 = np.minimum(i0 + 1, total - 1)
+    else:
+        length = loop_end - loop_start
+        idx = np.where(idx >= loop_end, loop_start + (idx - loop_end) % length, idx)
+        new_pos = pos + rate * n
+        if new_pos >= loop_end:
+            new_pos = loop_start + (new_pos - loop_end) % length
+        i0 = np.floor(idx).astype(np.int64)
+        i1 = i0 + 1
+        i1 = np.where(i1 >= loop_end, loop_start, i1)    # after the last sample of the loop comes its first
+    frac = (idx - i0).astype(np.float32)[:, None]
+    chunk = samples[i0] * (1.0 - frac) + samples[i1] * frac
+    return chunk.astype(np.float32), float(new_pos), idx
+
+
 def positions(pos: int, n: int, loop_start: int, loop_end: int | None, total: int) -> np.ndarray:
     """The file position of each of the `n` samples `render` returns from `pos` (so something
     that depends on the position, like the metronome, can be added to the chunk). Its length is
@@ -68,9 +100,13 @@ def positions(pos: int, n: int, loop_start: int, loop_end: int | None, total: in
     return out[:filled]
 
 
-def advance(pos: int, played: int, total: int, loop_start: int, loop_end: int | None) -> int:
-    """Where the play cursor is `played` samples after position `pos` (for drawing the cursor)."""
+def advance(pos: int, played: int, total: int, loop_start: int, loop_end: int | None,
+            rate: float = 1.0) -> int:
+    """Where the play cursor is `played` output samples after position `pos` (for drawing the cursor).
+    `rate` is the pitch step (file samples per output sample)."""
     _check(total, loop_start, loop_end)
+    if rate != 1.0:
+        played = int(played * rate)
     if loop_end is None:
         return min(pos + played, total)
     if pos >= loop_end:

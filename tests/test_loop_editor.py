@@ -30,7 +30,9 @@ import fixture  # noqa: E402
 import history  # noqa: E402
 import loopedit  # noqa: E402
 if np is not None:
+    import audiofx  # noqa: E402
     import loopfind  # noqa: E402
+    import loopplayback as _lp  # noqa: E402
 import loopwrite  # noqa: E402
 import rename_engine  # noqa: E402
 import loopmath  # noqa: E402
@@ -1067,6 +1069,113 @@ class TestLoopFind(unittest.TestCase):
         res = loopfind.find_loops(st, rate, min_length=3.0)
         self.assertTrue(res)
         self.assertGreater(res[0].seam, 0.9)
+
+
+@needs_numpy
+class TestPlaybackRate(unittest.TestCase):
+    def ramp(self, n=1000, ch=2):
+        return np.tile(np.arange(n, dtype=np.float32)[:, None], (1, ch))
+
+    def test_rate_one_equals_the_plain_render(self):
+        s = self.ramp()
+        for loop in ((200, 700), (0, 1000), None):
+            ls, le = loop if loop else (0, None)
+            pos_a, pos_b, out_a, out_b = 150, 150.0, [], []
+            for _ in range(6):                                  # several chunks, across the jump
+                a, pos_a = _lp.render(s, pos_a, 300, ls, le)
+                b, pos_b, _src = _lp.render_rate(s, pos_b, 300, ls, le, 1.0)
+                out_a.append(a)
+                out_b.append(b)
+                self.assertEqual(pos_a, int(pos_b))
+            self.assertTrue(np.allclose(np.concatenate(out_a), np.concatenate(out_b)))
+
+    def test_double_rate_steps_by_two(self):
+        s = self.ramp()
+        chunk, pos, src = _lp.render_rate(s, 10.0, 5, 0, None, 2.0)
+        self.assertEqual(chunk[:, 0].tolist(), [10.0, 12.0, 14.0, 16.0, 18.0])
+        self.assertEqual(pos, 20.0)
+        self.assertEqual(src.tolist(), [10.0, 12.0, 14.0, 16.0, 18.0])
+
+    def test_half_rate_interpolates(self):
+        s = self.ramp()
+        chunk, pos, _src = _lp.render_rate(s, 10.0, 4, 0, None, 0.5)
+        self.assertTrue(np.allclose(chunk[:, 0], [10.0, 10.5, 11.0, 11.5]))
+        self.assertAlmostEqual(pos, 12.0)
+
+    def test_play_once_stops_at_the_end(self):
+        s = self.ramp(100)
+        chunk, pos, _src = _lp.render_rate(s, 90.0, 50, 0, None, 1.5)
+        self.assertLess(len(chunk), 50)
+        self.assertLessEqual(float(chunk[-1, 0]), 99.0)
+        empty, _p, _s = _lp.render_rate(s, 99.5, 10, 0, None, 1.5)
+        self.assertEqual(len(empty), 0)
+
+    def test_loop_jump_is_exact_at_any_rate(self):
+        s = self.ramp(1000)
+        chunk, pos, src = _lp.render_rate(s, 690.0, 20, 200, 700, 2.0)    # 690, 692 ... 698, then 200 + (700 - 700)
+        self.assertEqual(src[:5].tolist(), [690.0, 692.0, 694.0, 696.0, 698.0])
+        self.assertEqual(src[5], 200.0)                                    # the first sample at the end reads the loop start
+        self.assertTrue(np.all(src < 700.0) and np.all(src >= 200.0))
+        self.assertTrue(200.0 <= pos < 700.0)
+
+    def test_the_sample_after_the_last_one_of_the_loop_is_its_first(self):
+        s = self.ramp(1000)
+        chunk, _p, _src = _lp.render_rate(s, 698.5, 1, 200, 700, 1.0)      # between 698 and 699: plain interpolation
+        self.assertAlmostEqual(float(chunk[0, 0]), 698.5, places=4)
+        chunk, _p, _src = _lp.render_rate(s, 699.5, 1, 200, 700, 1.0)      # between 699 and the loop start 200
+        self.assertAlmostEqual(float(chunk[0, 0]), (699 + 200) / 2, places=3)
+
+    def test_a_sine_changes_pitch_with_the_rate(self):
+        rate = 22050
+        t = np.arange(rate * 2) / rate
+        s = np.sin(2 * np.pi * 440 * t).astype(np.float32)[:, None]
+        for factor in (0.5, 1.5):
+            chunk, _p, _src = _lp.render_rate(s, 0.0, rate, 0, None, factor)
+            spec = np.abs(np.fft.rfft(chunk[:, 0] * np.hanning(len(chunk))))
+            peak = float(np.argmax(spec)) * rate / len(chunk)
+            self.assertAlmostEqual(peak, 440 * factor, delta=3.0)
+
+    def test_advance_counts_in_file_samples(self):
+        self.assertEqual(_lp.advance(100, 1000, 100000, 0, None, 1.5), 1600)
+        self.assertEqual(_lp.advance(100, 1000, 100000, 0, None), 1100)
+        self.assertEqual(_lp.advance(0, 1000, 100000, 200, 500, 2.0), 200 + (2000 - 500) % 300)
+
+
+@needs_numpy
+class TestAudioFx(unittest.TestCase):
+    def test_pitch_to_rate(self):
+        self.assertEqual(audiofx.rate_from_pitch(100), 1.0)
+        self.assertEqual(audiofx.rate_from_pitch(150), 1.5)
+        self.assertEqual(audiofx.rate_from_pitch(50), 0.5)
+        self.assertEqual(audiofx.rate_from_pitch(10), 0.5)      # clamped to MZ's range
+        self.assertEqual(audiofx.rate_from_pitch(900), 1.5)
+
+    def test_centre_pan_changes_nothing(self):
+        c = np.array([[0.5, -0.25], [0.1, 0.2]], np.float32)
+        self.assertTrue(audiofx.apply_pan(c, 0) is c)
+
+    def test_full_left_and_full_right(self):
+        c = np.array([[0.5, 0.25], [0.1, 0.2]], np.float32)
+        left = audiofx.apply_pan(c, -100)
+        self.assertTrue(np.allclose(left[:, 1], 0.0, atol=1e-6))
+        self.assertTrue(np.allclose(left[:, 0], c[:, 0] + c[:, 1], atol=1e-6))
+        right = audiofx.apply_pan(c, 100)
+        self.assertTrue(np.allclose(right[:, 0], 0.0, atol=1e-6))
+        self.assertTrue(np.allclose(right[:, 1], c[:, 0] + c[:, 1], atol=1e-6))
+
+    def test_half_way_is_equal_power_and_in_between(self):
+        c = np.array([[1.0, 0.0]], np.float32)               # only the left channel
+        out = audiofx.apply_pan(c, 50)
+        self.assertAlmostEqual(float(out[0, 0]), float(np.cos(np.pi / 4)), places=5)
+        self.assertAlmostEqual(float(out[0, 1]), float(np.sin(np.pi / 4)), places=5)
+
+    def test_not_stereo_is_left_alone(self):
+        mono = np.ones((4, 1), np.float32)
+        self.assertTrue(audiofx.apply_pan(mono, 80) is mono)
+        six = np.ones((4, 6), np.float32)
+        self.assertTrue(audiofx.apply_pan(six, -80) is six)
+        empty = np.zeros((0, 2), np.float32)
+        self.assertEqual(len(audiofx.apply_pan(empty, 80)), 0)
 
 
 if __name__ == "__main__":
