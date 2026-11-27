@@ -175,7 +175,7 @@ work on real sample numbers. Left out: seam view during playback follow, a cross
 
 ## Ideas for later
 
-* Tap tempo / BPM detection; a grid per section for songs that change tempo.
+The plan for what comes next is in [ROADMAP.md](ROADMAP.md).
 
 ## Conventions
 

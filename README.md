@@ -83,6 +83,7 @@ The full list is in the [manual](docs/MANUAL.md#what-it-cannot-see) and the
 
 - [User manual](docs/MANUAL.md): every screen, every Health tab, plugin support, caches and troubleshooting.
 - [Developer guide](docs/DEVELOPMENT.md): code layout, running the tests, the real-window smoke test.
+- [Roadmap](docs/ROADMAP.md): what is planned next.
 - [Changelog](CHANGELOG.md)
 
 ## Tests
