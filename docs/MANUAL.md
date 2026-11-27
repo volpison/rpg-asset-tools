@@ -228,6 +228,13 @@ explains what to install.
 * Remarks in plain words when something looks unusual (tag names in lower case, a value that is not a whole
   number, a loop that ends after the end of the file, LOOPSTART without LOOPLENGTH, and so on).
 
+**The window's boxes**
+
+The controls are grouped: *Play* (Play, Stop, From loop start, Hear the seam, Loop like the game, Volume), *View*
+(zoom buttons and Seam view), *Loop points* (the three number boxes, Start/End = cursor, Snap to zero crossing)
+and *Tools* (Suggest loops..., the beat grid and metronome, loop length in bars). **Revert** and **Save tags...**
+are at the lower right, next to the hint line.
+
 **Listening**
 
 * *Play / Pause* plays from the cursor. *Stop* returns the cursor to where playing started.
@@ -282,7 +289,7 @@ helps with that:
 
 **Seam view**
 
-Some loops are best found by hand, by looking at the join. Turn on **Seam view** (next to the zoom buttons)
+Some loops are best found by hand, by looking at the join. Turn on **Seam view** (in the *View* box, with the zoom buttons)
 and what lies to the right of the loop end changes (the view itself stays where it is, so you can switch the option on and off to compare the same place): instead of the rest of the file (the
 real outro), it shows **what the game plays after the jump, the beginning of the loop** from the loop start
 on. That part is drawn in orange and labelled "after the jump". The two waves meet at the dashed white line, so
@@ -302,7 +309,7 @@ the very end of the file, the view scrolls just enough to show the part after th
 
 **Suggest loops**
 
-*Suggest loops...* (beside *End = cursor*) compares the song with itself to find places where the music
+*Suggest loops...* (in the *Tools* box) compares the song with itself to find places where the music
 repeats, so that the jump from the loop end back to the loop start is hard to hear. It does not need a BPM,
 but it works best on music with a clear beat or a repeating pattern.
 

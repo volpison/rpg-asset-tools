@@ -6,6 +6,9 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Loop editor layout: the controls are in boxes (*Play*, *View*, *Loop points*, *Tools*), the tools (Suggest loops, beat grid, bars) are apart from the player buttons, and *Revert* and *Save tags...* are at the lower right.
+
 ### Added
 - Loop editor, seam view: a "Seam view" option (and a "Zoom to seam" button) that, after the loop end, shows
   the beginning of the loop instead of the file's real outro, so the join can be judged by eye. The grid, the
