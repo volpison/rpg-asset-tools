@@ -787,6 +787,14 @@ def main() -> int:
             per = (time.perf_counter() - t_paint) / 30 * 1000
             assert per < 60, f"a repaint of the zoomed seam view takes {per:.0f} ms"
             d.chk_seamview.setChecked(False)
+            # layout: Revert and Save at the lower right, the tools apart from the player buttons
+            from PySide6.QtCore import QPoint
+            def where(w):
+                return w.mapTo(d, QPoint(0, 0))
+            assert where(d.btn_save).y() > where(d.ed["start"]).y(), "Save tags is not below the loop points"
+            assert where(d.btn_revert).x() < where(d.btn_save).x() and where(d.btn_save).x() > d.width() // 2
+            assert where(d.btn_suggest).y() > where(d.btn_play).y() + d.btn_play.height(), "Suggest loops is not apart from the player"
+            assert d.btn_suggest.parentWidget() is not d.btn_play.parentWidget(), "tools and player share a box"
             d.discard_changes()
             d.close()
             s.note = f"repaint {per:.1f} ms, view stays put when switched on/off and while playing, timeline = file up to the loop end + the loop's beginning, clicks map to the right sample"

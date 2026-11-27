@@ -24,7 +24,7 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen, QPolygonF
 from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QScrollBar, QSizePolicy, QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -620,6 +620,8 @@ class LoopEditorDialog(QDialog):
         row.addWidget(QLabel("Volume"))
         row.addWidget(self.volume)
         row.addStretch(1)
+        play_box = self._box("Play", row)
+        row = QHBoxLayout()                          # the zoom buttons: their own box
         self.zoom_btns = []
         for text, tip, fn in (("-", "Zoom out", lambda: self.view.zoom(1.5)),
                               ("+", "Zoom in", lambda: self.view.zoom(1 / 1.5)),
@@ -638,7 +640,11 @@ class LoopEditorDialog(QDialog):
                                      "at the matching sample of the loop's beginning.")
         self.chk_seamview.toggled.connect(self._on_seam_view)
         row.addWidget(self.chk_seamview)
-        lay.addLayout(row)
+        view_box = self._box("View", row)
+        top = QHBoxLayout()
+        top.addWidget(play_box, 3)
+        top.addWidget(view_box, 2)
+        lay.addLayout(top)
 
         grid = QGridLayout()
         mono = QFont("Consolas")
@@ -694,12 +700,10 @@ class LoopEditorDialog(QDialog):
         self.btn_save.setToolTip("Write LOOPSTART and LOOPLENGTH into the file. A backup is made first "
                                  "and Undo in the main window can restore it.")
         self.btn_save.clicked.connect(lambda _checked=False: self.save_tags())
-        for wdg in (self.btn_set_start, self.btn_set_end, self.btn_suggest, self.chk_snap):
+        for wdg in (self.btn_set_start, self.btn_set_end, self.chk_snap):
             edit.addWidget(wdg)
         edit.addStretch(1)
-        edit.addWidget(self.btn_revert)
-        edit.addWidget(self.btn_save)
-        lay.addLayout(edit)
+        lay.addWidget(self._box("Loop points", edit))
 
         beat = QHBoxLayout()
         self.chk_grid = QCheckBox("Beat grid")
@@ -750,7 +754,8 @@ class LoopEditorDialog(QDialog):
         self.sl_metro.valueChanged.connect(lambda _v: self._update_metronome())
         beat.addWidget(self.sl_metro)
         beat.addStretch(1)
-        lay.addLayout(beat)
+        tools = QVBoxLayout()                        # the utilities, apart from the player
+        tools.addLayout(beat)
 
         bars = QHBoxLayout()
         bars.addWidget(QLabel("Loop length in bars:"))
@@ -771,14 +776,21 @@ class LoopEditorDialog(QDialog):
         self.btn_bpm_from_loop.clicked.connect(lambda _c=False: self._bpm_from_loop())
         bars.addWidget(self.btn_bpm_from_loop)
         bars.addStretch(1)
-        lay.addLayout(bars)
+        bars.insertWidget(0, self.btn_suggest)
+        bars.insertSpacing(1, 24)
+        tools.addLayout(bars)
+        lay.addWidget(self._box("Tools", tools))
 
         self.notes = QLabel("")
         self.notes.setWordWrap(True)
         lay.addWidget(self.notes)
         self.hint = QLabel(self._HINT)
         self.hint.setWordWrap(True)
-        lay.addWidget(self.hint)
+        bottom = QHBoxLayout()                       # the hint on the left, Revert and Save at the lower right
+        bottom.addWidget(self.hint, 1)
+        bottom.addWidget(self.btn_revert)
+        bottom.addWidget(self.btn_save)
+        lay.addLayout(bottom)
 
         self._set_controls_enabled(False)
         self._show_tag_values()
@@ -862,6 +874,12 @@ class LoopEditorDialog(QDialog):
 
     def _fmt_pos(self, frame: int) -> str:
         return f"{frame}  ({loopmath.format_time(frame, self._info.sample_rate)})"
+
+    @staticmethod
+    def _box(title: str, layout) -> QGroupBox:
+        box = QGroupBox(title)
+        box.setLayout(layout)
+        return box
 
     # ----- the beat grid and the metronome
     @property
