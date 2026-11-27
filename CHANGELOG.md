@@ -10,6 +10,9 @@ All notable changes are listed here. The format follows
 - The "Play audio..." window is gone (its controls never worked for Ogg on Windows). The details panel has an **Open in external player...** button for every sound (BGM, BGS, ME, SE), next to **Loop editor...**, also in the right-click menu and on a double-click. It opens the file directly, with no confirmation question.
 - Loop editor layout: the controls are in boxes (*Play*, *View*, *Loop points*, *Tools*), the tools (Suggest loops, beat grid, bars) are apart from the player buttons, and *Revert* and *Save tags...* are at the lower right.
 
+### Fixed
+- Loop editor, very long songs: the waveform is now built in chunks (a long song no longer needs about 0.85 times its own size again as temporary memory), and *Suggest loops* compares a song longer than about 6 minutes in a coarser way, so the search stays at about 65 MB instead of growing with the square of the length (about 670 MB for 20 minutes). The window says so when this happens; the suggested points are still refined to the exact sample.
+
 ### Added
 - Loop editor, pan and pitch: a **Pitch** slider (50-150) and a **Pan** slider (-100 to 100) in the Play box, with **Reset pitch/pan**, work like the game's PlayBGM. Pitch changes speed and pitch together (as in MZ); pan needs a stereo file. They are for listening only: nothing is saved, the loop points are not changed, and the loop jump, beat grid and metronome keep following the music. Volume moved to the second row of the Play box.
 - Loop editor, seam view: a "Seam view" option (and a "Zoom to seam" button) that, after the loop end, shows

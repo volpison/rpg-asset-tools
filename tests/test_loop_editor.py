@@ -1178,5 +1178,58 @@ class TestAudioFx(unittest.TestCase):
         self.assertEqual(len(audiofx.apply_pan(empty, 80)), 0)
 
 
+@needs_numpy
+class TestLongSongs(unittest.TestCase):
+    """Memory work for very long songs: the pyramid is built in chunks, the matrix is capped."""
+
+    def test_chunked_pyramid_equals_the_whole_build(self):
+        rng = np.random.default_rng(5)
+        for frames, ch in ((1, 2), (63, 1), (64, 2), (5000, 2), (3 * waveform.CHUNK + 777, 2)):
+            x = rng.normal(size=(frames, ch)).astype("float32")
+            pyr = waveform.build_pyramid(x)
+            lo, hi = x.min(axis=1), x.max(axis=1)         # the straightforward, all-at-once version
+            level_lo, level_hi = waveform._reduce(lo, hi, waveform.BASE)
+            self.assertTrue(np.array_equal(pyr.mins[0], level_lo), frames)
+            self.assertTrue(np.array_equal(pyr.maxs[0], level_hi), frames)
+            self.assertEqual(pyr.sizes[0], waveform.BASE)
+
+    def test_empty_audio_does_not_break_the_pyramid(self):
+        pyr = waveform.build_pyramid(np.zeros((0, 2), np.float32))
+        self.assertEqual(pyr.frames, 0)
+
+    def test_chunk_is_a_multiple_of_the_bucket(self):
+        self.assertEqual(waveform.CHUNK % waveform.BASE, 0)
+
+    def test_coarse_factor(self):
+        rate = 44100
+        self.assertEqual(loopfind.coarse_factor(rate * 60 * 3, rate), 1)
+        self.assertEqual(loopfind.coarse_factor(rate * 60 * 20, rate), 4)
+        self.assertEqual(loopfind.coarse_factor(100, rate), 1)
+
+    def test_coarsen_keeps_unit_vectors_and_silence(self):
+        f = np.zeros((10, 4), np.float32)
+        f[:4, 0] = 1.0
+        f[4:8, 1] = 1.0                                    # frames 8, 9 stay silent
+        out = loopfind._coarsen(f, 4)
+        self.assertEqual(out.shape, (2, 4))
+        self.assertAlmostEqual(float(np.linalg.norm(out[0])), 1.0, places=5)
+        self.assertEqual(float(np.linalg.norm(loopfind._coarsen(np.zeros((8, 4), np.float32), 4))), 0.0)
+
+    def test_a_capped_search_still_finds_the_pattern(self):
+        song, rate = _pattern_song()
+        old = loopfind.MAX_FRAMES
+        loopfind.MAX_FRAMES = 60                           # the 14 s song has ~150 frames: factor 3
+        try:
+            self.assertGreater(loopfind.coarse_factor(len(song), rate), 1)
+            res = loopfind.find_loops(song, rate, min_length=3.0)
+        finally:
+            loopfind.MAX_FRAMES = old
+        self.assertTrue(res)
+        top = res[0]
+        self.assertAlmostEqual((top.length / rate) % 4.0 or 4.0, 4.0, delta=0.05)
+        self.assertGreaterEqual(top.start, 3 * rate - rate // 2)
+        self.assertLessEqual(top.end, 19 * rate + rate // 2)
+
+
 if __name__ == "__main__":
     unittest.main()

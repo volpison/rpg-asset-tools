@@ -149,7 +149,11 @@ class SuggestDialog(QDialog):
         self.btn_search.setEnabled(False)
         self.table.setRowCount(0)
         self.candidates = []
-        self.status.setText("Searching... (a few seconds for a long song)")
+        import loopfind
+        note = ""
+        if loopfind.coarse_factor(len(self._samples), self._rate) > 1:
+            note = " This song is very long, so it is compared in a coarser way to save memory."
+        self.status.setText("Searching... (a few seconds for a long song)" + note)
         self._job = _SearchJob(self._samples, self._rate, **self._options())
         self._job.done.connect(self._on_done)
         self._job.failed.connect(self._on_failed)
