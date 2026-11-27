@@ -9,7 +9,7 @@ the order can change, and each item becomes its own pull request. The *why* of f
 1. **Main window:** replace the "Play audio" window (its volume, pitch and pan are always off; only
    "Open in external player..." works) with a direct **Open in external player...** button next to
    **Loop editor...**. ME and SE have no loop editor and still need a quick listen, so the external player
-   button stays for them. Add **pan** and **pitch** inside the loop editor.
+   button stays for them. Add **pan** and **pitch** inside the loop editor (done: sliders in the Play box).
 2. **Loop editor layout:** *Revert* and *Save tags...* at the lower right; the utilities (*Suggest loops...*, the BPM
    finder) together in their own group box, apart from the player buttons.
 3. **Memory for very long songs.** The song is decoded whole to 32-bit float: about 64 MB for 3 minutes, 423 MB for

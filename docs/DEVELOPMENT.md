@@ -45,7 +45,8 @@ call into them. Keep it that way: it is what makes most of the app testable with
 | `metronome.py` | click sound added into the playback buffer by file position (numpy) |
 | `loopmath.py` | which loop is shown/played for the tags found, time formatting, ruler steps |
 | `waveform.py` | min/max pyramid for drawing any zoom level quickly (numpy) |
-| `loopplayback.py` | which samples come next, the exact loop jump, cursor position (numpy) |
+| `loopplayback.py` | which samples come next (also at a changed rate), the exact loop jump, cursor position (numpy) |
+| `audiofx.py` | MZ-style pitch (rate from 50-150) and the stereo pan formula (numpy) |
 | `audiodecode.py` | the one place that decodes audio (optional numpy + soundfile; clear message when missing) |
 | `loopfind.py` | loop-point suggestions by self-comparison of the song (numpy, no Qt) |
 | `loop_suggest_gui.py` | the "Suggest loops" window: background search, candidate table |
@@ -113,6 +114,13 @@ window. If the UI thread stops for about 8 seconds, every thread's stack goes to
 `~/.rpg_asset_tools/hang.log`. Set `RPGAT_NO_WATCHDOG=1` to disable it (the tests do).
 
 ## Decisions
+
+**Loop editor: pan and pitch are playback-only.** Pitch is MZ's: a playback-rate change (speed and pitch together,
+50-150), done by linear-interpolation resampling in `loopplayback.render_rate` (positions are floats; the loop wrap
+and the play-once end are exact; at rate 1.0 the old whole-sample path is used unchanged). Pan is the Web Audio
+stereo-panner formula (`audiofx.apply_pan`), applied to the chunk before the metronome is mixed in. The cursor is
+found with `advance(..., rate)`. A pitch change restarts the run (rate is per run, debounced 100 ms); pan is live.
+Nothing is saved and loop tags stay in file samples. Left out: pitch without speed (time-stretching), because the game does not do it.
 
 **Main window: no in-app preview for sounds.** The small "Play audio" window (QMediaPlayer; volume, pitch and pan
 never worked for Ogg on Windows) was removed. A sound is played by **Open in external player...**, which hands the

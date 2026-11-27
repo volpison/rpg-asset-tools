@@ -11,6 +11,7 @@ All notable changes are listed here. The format follows
 - Loop editor layout: the controls are in boxes (*Play*, *View*, *Loop points*, *Tools*), the tools (Suggest loops, beat grid, bars) are apart from the player buttons, and *Revert* and *Save tags...* are at the lower right.
 
 ### Added
+- Loop editor, pan and pitch: a **Pitch** slider (50-150) and a **Pan** slider (-100 to 100) in the Play box, with **Reset pitch/pan**, work like the game's PlayBGM. Pitch changes speed and pitch together (as in MZ); pan needs a stereo file. They are for listening only: nothing is saved, the loop points are not changed, and the loop jump, beat grid and metronome keep following the music. Volume moved to the second row of the Play box.
 - Loop editor, seam view: a "Seam view" option (and a "Zoom to seam" button) that, after the loop end, shows
   the beginning of the loop instead of the file's real outro, so the join can be judged by eye. The grid, the
   ruler and clicks follow it. Switching it on or off does not move the view, and while it is on the view stays on the jump during playback (following the cursor made zoomed-in playback stutter at every loop jump).

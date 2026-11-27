@@ -841,6 +841,60 @@ def main() -> int:
             d.close()
             s.note = f"repaint {per:.1f} ms, view stays put when switched on/off and while playing, timeline = file up to the loop end + the loop's beginning, clicks map to the right sample"
 
+    with step("loop editor pan and pitch") as s:
+        import audiodecode
+        missing = audiodecode.missing_dependencies()
+        if missing:
+            s.note = "SKIPPED: " + " and ".join(missing) + " not installed"
+        else:
+            import numpy as np
+            import soundfile
+            import loop_editor_gui
+            from PySide6.QtMultimedia import QMediaDevices
+
+            pg = tmp / "fx_game"                      # never the user's own project
+            (pg / "audio" / "bgm").mkdir(parents=True)
+            rate = 44100
+            tone = (0.3 * np.sin(2 * np.pi * 330 * np.arange(rate * 4) / rate)).astype("float32")
+            ogg = pg / "audio" / "bgm" / "Fx.ogg"
+            soundfile.write(str(ogg), np.column_stack([tone, tone]), rate, format="OGG", subtype="VORBIS")
+            d = loop_editor_gui.open_loop_editor(ogg, "Fx", win, game=pg)
+            assert d is not None, "the editor did not open"
+            t0 = time.monotonic()
+            while not (d.ready or d.error):
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 30, "decoding did not finish"
+            assert not d.error, d.error
+            assert d.sl_pitch.value() == 100 and d.sl_pan.value() == 0 and d.sl_pan.isEnabled()
+            d.sl_pitch.setValue(150)
+            d.sl_pan.setValue(-60)
+            assert d.lbl_pitch.text() == "Pitch 150" and d.lbl_pan.text() == "Pan -60"
+            note = "sliders and labels work"
+            if not QMediaDevices.defaultAudioOutput().isNull():
+                assert d.play(0), "playback did not start: " + d.hint.text()
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 0.5:
+                    APP.processEvents()
+                    time.sleep(0.01)
+                assert d.is_playing(), "playback stopped by itself: " + d.playback_report()
+                assert d._head > 26000, f"pitch 150 should run faster than normal, cursor at {d._head}: " + d.playback_report()
+                d.sl_pitch.setValue(70)               # changing the pitch while playing carries on from here
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 0.4:
+                    APP.processEvents()
+                    time.sleep(0.01)
+                assert d.is_playing(), "playback stopped after a pitch change: " + d.playback_report()
+                assert d._run_rate == 0.7, d._run_rate
+                d.reset_pitch_pan()
+                pump()
+                d.stop()
+                note += f", played at pitch 150 (cursor {d._head}) and changed the pitch while playing"
+            else:
+                note += " (playback not tested: no sound output device)"
+            d.close()
+            s.note = note
+
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
         if not read_only and pool["n"] == 0:

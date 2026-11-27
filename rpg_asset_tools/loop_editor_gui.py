@@ -105,9 +105,12 @@ class _Feeder:
         self.fed = 0                      # bytes given to the device (for the report)
         self.feeds = 0
         self.metronome = None             # a metronome.Metronome whose clicks are added, or None
+        self.rate = 1.0                   # pitch: file samples per output sample
+        self.pan = 0                      # -100 .. 100 (stereo files only)
 
-    def configure(self, pos: int, loop_start: int, loop_end) -> None:
-        self._pos, self._loop_start, self._loop_end = pos, loop_start, loop_end
+    def configure(self, pos: int, loop_start: int, loop_end, rate: float = 1.0) -> None:
+        self.rate = rate
+        self._pos, self._loop_start, self._loop_end = (pos if rate == 1.0 else float(pos)), loop_start, loop_end
         self._pending = b""
         self.finished = False
 
@@ -125,11 +128,23 @@ class _Feeder:
         while free_bytes >= frame_bytes and not self.finished:
             n = min(free_bytes // frame_bytes, self.MAX_FRAMES)
             first = self._pos
-            chunk, self._pos = loopplayback.render(
-                self._samples, self._pos, n, self._loop_start, self._loop_end)
+            if self.rate == 1.0:                       # normal pitch: the plain, whole-sample path
+                chunk, self._pos = loopplayback.render(
+                    self._samples, int(self._pos), n, self._loop_start, self._loop_end)
+                where = None
+            else:
+                chunk, self._pos, where = loopplayback.render_rate(
+                    self._samples, self._pos, n, self._loop_start, self._loop_end, self.rate)
+            if self.pan and len(chunk):
+                import audiofx
+                chunk = audiofx.apply_pan(chunk, self.pan)
             if self.metronome is not None and self.metronome.active and len(chunk):
-                self.metronome.mix_into(chunk, loopplayback.positions(
-                    first, len(chunk), self._loop_start, self._loop_end, self._samples.shape[0]))
+                if where is None:
+                    where = loopplayback.positions(
+                        int(first), len(chunk), self._loop_start, self._loop_end, self._samples.shape[0])
+                else:
+                    where = where.astype("int64")
+                self.metronome.mix_into(chunk, where)
             if len(chunk) < n:
                 self.finished = True
             if len(chunk) == 0:
@@ -563,6 +578,7 @@ class LoopEditorDialog(QDialog):
         self._sink_fmt = None             # (rate, channels) the current sink was made for
         self._base_frames = 0             # frames written to the sink by earlier runs
         self._run_loop = (0, None)        # loop settings of the current play run
+        self._run_rate = 1.0              # playback rate (pitch) of the current play run
         self._origin = 0                  # where the current play run started
         self._head = 0                    # where the cursor is while stopped or paused
         self._shut = False
@@ -617,10 +633,41 @@ class LoopEditorDialog(QDialog):
         self.volume.valueChanged.connect(self._on_volume)
         for wdg in (self.btn_play, self.btn_stop, self.btn_from_loop, self.btn_seam, self.chk_loop):
             row.addWidget(wdg)
-        row.addWidget(QLabel("Volume"))
-        row.addWidget(self.volume)
         row.addStretch(1)
-        play_box = self._box("Play", row)
+        row2 = QHBoxLayout()                         # like the game's PlayBGM: volume, pitch, pan (preview only)
+        row2.addWidget(QLabel("Volume"))
+        row2.addWidget(self.volume)
+        self.sl_pitch = QSlider(Qt.Horizontal)
+        self.sl_pitch.setRange(50, 150)
+        self.sl_pitch.setValue(100)
+        self.sl_pitch.setFixedWidth(110)
+        self.sl_pitch.setToolTip("Like the game's pitch (50-150): speed and pitch change together. "
+                                 "Only for listening; the loop points are not affected.")
+        self.lbl_pitch = QLabel("Pitch 100")
+        self.lbl_pitch.setMinimumWidth(60)
+        self.sl_pitch.valueChanged.connect(self._on_pitch)
+        self._pitch_timer = QTimer(self)
+        self._pitch_timer.setSingleShot(True)
+        self._pitch_timer.setInterval(100)
+        self._pitch_timer.timeout.connect(self._apply_pitch)
+        self.sl_pan = QSlider(Qt.Horizontal)
+        self.sl_pan.setRange(-100, 100)
+        self.sl_pan.setValue(0)
+        self.sl_pan.setFixedWidth(110)
+        self.sl_pan.setToolTip("Like the game's pan (-100 left ... 100 right). Stereo files only; "
+                               "only for listening.")
+        self.lbl_pan = QLabel("Pan 0")
+        self.lbl_pan.setMinimumWidth(48)
+        self.sl_pan.valueChanged.connect(self._on_pan)
+        self.btn_reset_fx = QPushButton("Reset pitch/pan")
+        self.btn_reset_fx.clicked.connect(lambda _c=False: self.reset_pitch_pan())
+        for wdg in (self.lbl_pitch, self.sl_pitch, self.lbl_pan, self.sl_pan, self.btn_reset_fx):
+            row2.addWidget(wdg)
+        row2.addStretch(1)
+        col = QVBoxLayout()
+        col.addLayout(row)
+        col.addLayout(row2)
+        play_box = self._box("Play", col)
         row = QHBoxLayout()                          # the zoom buttons: their own box
         self.zoom_btns = []
         for text, tip, fn in (("-", "Zoom out", lambda: self.view.zoom(1.5)),
@@ -820,6 +867,7 @@ class LoopEditorDialog(QDialog):
         self.view.set_audio(pyr, audio.sample_rate)
         self.view.set_loop(self._loop)
         self.ready = True
+        self.sl_pan.setEnabled(audio.channels == 2)
         self._head = 0
         self.view.set_cursor(0)
         self._show_tag_values()
@@ -1382,7 +1430,9 @@ class LoopEditorDialog(QDialog):
         self._dev.metronome = self._metro
         ls, le = self._loop_args()
         self._run_loop = (ls, le)          # the settings this run really plays with
-        self._dev.configure(pos, ls, le)
+        self._run_rate = self._rate_now()
+        self._dev.pan = self._pan_now()
+        self._dev.configure(pos, ls, le, self._run_rate)
         self._origin = pos
         if fresh:
             self._io = self._sink.start()
@@ -1427,7 +1477,7 @@ class LoopEditorDialog(QDialog):
         # the buffer when the run was started, comes first)
         played = max(0, int(self._sink.processedUSecs() * rate / 1_000_000) - self._base_frames)
         ls, le = self._run_loop
-        return loopplayback.advance(self._origin, played, self._audio.frames, ls, le)
+        return loopplayback.advance(self._origin, played, self._audio.frames, ls, le, self._run_rate)
 
     def _tick(self) -> None:
         if self._sink is None:
@@ -1519,6 +1569,30 @@ class LoopEditorDialog(QDialog):
     def _on_volume(self, value: int) -> None:
         if self._sink is not None:
             self._sink.setVolume(value / 100.0)
+
+    def _rate_now(self) -> float:
+        import audiofx
+        return audiofx.rate_from_pitch(self.sl_pitch.value())
+
+    def _pan_now(self) -> int:
+        return self.sl_pan.value() if self.sl_pan.isEnabled() else 0
+
+    def _on_pitch(self, value: int) -> None:
+        self.lbl_pitch.setText(f"Pitch {value}")
+        self._pitch_timer.start()                 # restart once the slider rests (the rate is per run)
+
+    def _apply_pitch(self) -> None:
+        if self._sink is not None and self._rate_now() != self._run_rate:
+            self._restart_if_playing()
+
+    def _on_pan(self, value: int) -> None:
+        self.lbl_pan.setText(f"Pan {value}")
+        if self._dev is not None:
+            self._dev.pan = self._pan_now()       # applied live, from the next chunk
+
+    def reset_pitch_pan(self) -> None:
+        self.sl_pitch.setValue(100)
+        self.sl_pan.setValue(0)
 
     # ----- closing
     def _shutdown(self) -> None:

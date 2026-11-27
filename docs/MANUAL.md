@@ -231,10 +231,16 @@ explains what to install.
 
 **The window's boxes**
 
-The controls are grouped: *Play* (Play, Stop, From loop start, Hear the seam, Loop like the game, Volume), *View*
+The controls are grouped: *Play* (Play, Stop, From loop start, Hear the seam, Loop like the game; below them Volume, Pitch, Pan and
+*Reset pitch/pan*), *View*
 (zoom buttons and Seam view), *Loop points* (the three number boxes, Start/End = cursor, Snap to zero crossing)
 and *Tools* (Suggest loops..., the beat grid and metronome, loop length in bars). **Revert** and **Save tags...**
 are at the lower right, next to the hint line.
+
+**Pitch and pan.** *Pitch* (50-150, 100 = normal) and *Pan* (-100 left to 100 right) behave like the game's
+*Play BGM* settings: pitch changes the speed and the tone together, so 150 is faster and higher. They are only
+for listening to how the song will sound in the game; they are never written to the file, and the loop points,
+beat grid and metronome are unaffected. Pan is available for stereo files only. *Reset pitch/pan* puts both back.
 
 **Listening**
 
