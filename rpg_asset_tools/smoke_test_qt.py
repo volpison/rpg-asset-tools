@@ -224,17 +224,20 @@ def main() -> int:
         real_open = gui.open_in_external_player
         gui.open_in_external_player = lambda path, parent=None, ask=True: (opened.append((path.name, ask)), True)[1]
         try:
+            wanted = []
             for cat in ("bgm", "se"):
                 r = row_of(cat)
                 assert r is not None, f"the fake project has no {cat} row"
                 win.table.selectRow(r)
                 pump()
+                wanted.append(win._selected()[0]["name"])
                 assert not win.btn_external.isHidden(), f"no external player button for a {cat}"
                 assert win.btn_external.text().startswith("Open in external player")
                 assert not hasattr(win, "btn_play"), "the old Play audio button is still there"
                 win.btn_external.click()
             assert len(opened) == 2 and all(not ask for _n, ask in opened), opened   # no confirmation question
-            assert all(n.endswith(".ogg") for n, _a in opened), opened
+            # the file of the selected asset (a row may be the .ogg or its .m4a twin), and an audio file
+            assert all(n.startswith(w) and n.lower().endswith((".ogg", ".m4a")) for (n, _a), w in zip(opened, wanted)), (opened, wanted)
             r = row_of("bgm")
             win.table.selectRow(r)
             pump()
