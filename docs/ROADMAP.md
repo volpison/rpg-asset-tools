@@ -29,23 +29,24 @@ After the loop editor is complete: documentation layout (a leaflet README, user 
 a decisions log, data-format versions and migrations, a pull-request template and CI. Done before the next
 feature so that it lands in the new structure.
 
-## 3. Switch / variable ID reassign
+## 3. Switch / variable ID reassign: moved to RPG Story Adjuster
 
-Change a switch or variable ID everywhere it is used (event commands, page conditions, scripts, text codes).
-Decision (2026-11-27): build it **inside this app, as a separate tool**, on top of `dbscan.py`, which already
-knows every place an ID can hide and is tested. A separate project would have to copy that walker or build a
-second, different one. If more game-data editing tools follow, the shared core can be extracted then.
+Changing a switch or variable ID everywhere it is used is game-logic editing, not asset management, so it will
+**not** be built in this app. It lives in the sibling project
+[rpg-story-adjuster](https://github.com/volpison/rpg-story-adjuster), together with a readable text form of
+event commands and a safe round trip back to the game's JSON.
 
-Rules for it:
+Why it moved (decision of 2026-11-27): first it looked like one more tool on top of `dbscan.py`, which already
+knows every place an ID can hide. Then the wider goals (readable events, editing them, converting back) showed
+a different product with different risks and almost nothing in common with renames or audio. It needs its own
+table of event commands, which also serves the printer and the parser.
 
-* Phases: read-only scan and dry-run, then a preview window, then the write path. Dry-run is the default.
-* One walker for scanning and rewriting (`dbscan.py`), with each hit carrying the exact parameter slot to change.
-* Never rewrite computed references (`$gameSwitches.value(x)`); report them as warnings. Refuse a Control Switches /
-  Variables range that contains the ID until command splitting is designed. Refuse a new ID that is already used.
-* Backup, signature check, rollback and Undo as for renames, then **rescan to prove** the old ID has no hits and the
-  new ID has exactly the old hits plus its previous ones.
-* Not covered, and said so: save files made before the change, plugin code, plugin parameters not declared as a
-  switch or variable.
-* An earlier draft scanner (not merged) missed variable operands, variable-to-variable comparisons, Input Number,
-  Change Gold, Transfer Player, scripts inside branches and Control Variables, and mistook `value(10+1)` for ID 10;
-  its roadmap principles (phases, dry-run first, never touch dynamic references, backup and Undo) are kept.
+What stays here: the Health check's *Database* tab keeps finding unused, write-only and read-only switches and
+variables (`dbscan.py`). The two projects each keep their own knowledge of the commands for now; a shared library
+is worth extracting only if a third project needs it.
+
+Rules the new project follows (they came out of this analysis): dry-run by default; one walker for scanning and
+rewriting; never rewrite computed references (`$gameSwitches.value(x)`); refuse a range that contains the ID and a
+new ID that is already used; backup, signature check, rollback and Undo; then **rescan to prove** the old ID has no
+hits left. Not covered: save files made before the change, plugin code, plugin parameters not declared as a switch
+or variable.
