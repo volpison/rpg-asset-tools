@@ -283,11 +283,12 @@ helps with that:
 **Seam view**
 
 Some loops are best found by hand, by looking at the join. Turn on **Seam view** (next to the zoom buttons)
-and the editor zooms to the loop end and changes what lies to its right: instead of the rest of the file (the
+and what lies to the right of the loop end changes (the view itself stays where it is, so you can switch the option on and off to compare the same place): instead of the rest of the file (the
 real outro), it shows **what the game plays after the jump, the beginning of the loop** from the loop start
 on. That part is drawn in orange and labelled "after the jump". The two waves meet at the dashed white line, so
 you can see whether the shape, the level and the beat carry on across the join, and, zoomed in, whether the
-two sides meet at the same height. *Zoom to seam* does the same zoom without changing what is shown.
+two sides meet at the same height. *Zoom to seam* zooms to the loop end. (One exception: if the loop ends at
+the very end of the file, the view scrolls just enough to show the part after the jump.)
 
 * The beat grid and the time ruler follow: to the right of the jump they show the positions of the loop's
   beginning (the numbers there are the file's own times, so they start again from the loop start).

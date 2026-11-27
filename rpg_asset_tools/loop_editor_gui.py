@@ -1255,9 +1255,16 @@ class LoopEditorDialog(QDialog):
         self.view.set_view(first, n)
 
     def _on_seam_view(self, on: bool) -> None:
+        """Switch the seam view on or off WITHOUT moving the view, so the same place can be compared
+        with and without it. The one exception: when the loop end is at the right edge (a loop that
+        ends where the file ends), the orange part would be off-screen, so the view scrolls just far
+        enough to show it, with the loop end at 60 % of the width."""
         self.view.set_seam_view(on)
-        if on:
-            self._zoom_to_seam()                               # show the jump at once
+        if on and self._loop is not None:
+            start, span = self.view.view_range()
+            end = self._loop.end
+            if start < end <= start + span and start + span - end < 0.15 * span:
+                self.view.set_view(end - 0.6 * span, span)
 
     def _zoom_to_loop(self) -> None:
         if self._loop is None:

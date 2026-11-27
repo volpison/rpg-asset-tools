@@ -733,12 +733,19 @@ def main() -> int:
             plain = d.view.grab().toImage()
             total_before = d.view.total()
             assert total_before == rate * 6, total_before
+            d.view.set_view(rate * 2, rate * 2)                                # looking at the loop end
+            keep = d.view.view_range()
             d.chk_seamview.setChecked(True)
             pump()
             assert d.view.seam_view
             assert d.view.total() == rate * 3 + rate * 2, d.view.total()      # up to the end + the loop's 2 s
-            first, n = d.view.view_range()
-            assert abs((first + n / 2) - rate * 3) < rate * 0.2, (first, n)   # centred on the jump
+            assert d.view.view_range() == keep, (d.view.view_range(), keep)   # the view did not move
+            d.chk_seamview.setChecked(False)
+            pump()
+            assert d.view.view_range() == keep, "switching it off moved the view"
+            d.chk_seamview.setChecked(True)
+            pump()
+            assert d.view.view_range() == keep, "switching it on again moved the view"
             assert d.view.grab().toImage() != plain, "the seam view was not drawn"
             w = d.view.width()
             x_end = d.view.x_of(rate * 3)
@@ -756,9 +763,18 @@ def main() -> int:
             d._zoom_to_seam()
             first, n = d.view.view_range()
             assert abs((first + n / 2) - rate * 3) < rate * 0.2, (first, n)
+            # a loop that ends where the file ends: the orange part would be off-screen, so the view scrolls to it
+            last = d._audio.frames
+            assert d.set_loop_points(rate, last)
+            d.view.set_view(last - rate * 2, rate * 2)
+            d.chk_seamview.setChecked(True)
+            pump()
+            assert d.view.x_of(last) < d.view.width() * 0.9, "the part after the jump is out of sight"
+            assert d.view.view_range()[1] == rate * 2
+            d.chk_seamview.setChecked(False)
             d.discard_changes()
             d.close()
-            s.note = "timeline = file up to the loop end + the loop's beginning, drawn, clicks map to the right sample, off again"
+            s.note = "view stays put when switched on/off, timeline = file up to the loop end + the loop's beginning, clicks map to the right sample"
 
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
