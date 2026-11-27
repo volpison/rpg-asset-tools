@@ -294,6 +294,9 @@ the very end of the file, the view scrolls just enough to show the part after th
   beginning (the numbers there are the file's own times, so they start again from the loop start).
 * Clicking in the orange part places the cursor at the matching sample of the loop's beginning (the sample
   you would hear), and the cursor shows a dashed twin on the other side of the jump.
+* While Seam view is on, the view does **not** follow the playing cursor: it stays on the jump, and the cursor
+  crosses it on every pass (after the jump it shows a dashed twin in the orange part). Turn Seam view off to
+  follow the cursor again.
 * Drag the loop markers as usual and the picture follows. The view shows at most 15 seconds after the jump.
 * It only changes how the wave is drawn. Nothing is written to the file and playing is not affected.
 

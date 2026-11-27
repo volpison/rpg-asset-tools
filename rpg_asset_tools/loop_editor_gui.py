@@ -354,19 +354,21 @@ class WaveformView(QWidget):
             loop = self._loop
             x_end = min(max(self.x_of(loop.end), 0.0), float(w))
             shift = loop.start - loop.end
-            p.save()                                         # the file up to the loop end
-            p.setClipRect(QRectF(0, 0, x_end, h))
-            self._paint_wave(p, w, wave_top, wave_h, mid, pal)
-            self._paint_grid(p, w, wave_top, wave_h, text_color)
-            self._paint_ruler(p, w, text_color)
-            p.restore()
-            p.save()                                         # then what the game plays after the jump
-            p.setClipRect(QRectF(x_end, 0, w - x_end, h))
-            p.fillRect(QRectF(x_end, wave_top, w - x_end, wave_h), QColor(_LOOP_COLOR.red(), _LOOP_COLOR.green(), _LOOP_COLOR.blue(), 22))
-            self._paint_wave(p, w, wave_top, wave_h, mid, pal, shift, _LOOP_COLOR.darker(110))
-            self._paint_grid(p, w, wave_top, wave_h, text_color, shift)
-            self._paint_ruler(p, w, text_color, shift)
-            p.restore()
+            if x_end > 0:                                    # the file up to the loop end (if it is in view)
+                p.save()
+                p.setClipRect(QRectF(0, 0, x_end, h))
+                self._paint_wave(p, w, wave_top, wave_h, mid, pal)
+                self._paint_grid(p, w, wave_top, wave_h, text_color)
+                self._paint_ruler(p, w, text_color)
+                p.restore()
+            if x_end < w:                                    # then what the game plays after the jump
+                p.save()
+                p.setClipRect(QRectF(x_end, 0, w - x_end, h))
+                p.fillRect(QRectF(x_end, wave_top, w - x_end, wave_h), QColor(_LOOP_COLOR.red(), _LOOP_COLOR.green(), _LOOP_COLOR.blue(), 22))
+                self._paint_wave(p, w, wave_top, wave_h, mid, pal, shift, _LOOP_COLOR.darker(110))
+                self._paint_grid(p, w, wave_top, wave_h, text_color, shift)
+                self._paint_ruler(p, w, text_color, shift)
+                p.restore()
         else:
             self._paint_wave(p, w, wave_top, wave_h, mid, pal)
             self._paint_grid(p, w, wave_top, wave_h, text_color)
@@ -1430,6 +1432,10 @@ class LoopEditorDialog(QDialog):
         self._keep_cursor_visible()
 
     def _keep_cursor_visible(self) -> None:
+        if self.view.seam_view:
+            return          # in seam view the view stays on the jump: the cursor crosses it (and shows its
+                            # twin after the jump) on every pass; following it would re-scroll and repaint
+                            # on every tick when zoomed in, and starve the sound feeder
         start, span = self.view.view_range()
         if span >= self.view.total():
             return

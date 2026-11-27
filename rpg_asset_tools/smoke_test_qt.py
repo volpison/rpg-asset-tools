@@ -771,10 +771,25 @@ def main() -> int:
             pump()
             assert d.view.x_of(last) < d.view.width() * 0.9, "the part after the jump is out of sight"
             assert d.view.view_range()[1] == rate * 2
+            # zoomed in far with the seam view on: the view must not follow the cursor (it used to scroll on
+            # every tick after the jump and starve the sound), and a repaint must be cheap
+            d.view.set_view(last - 220, 440)
+            d.chk_seamview.setChecked(True)
+            pump()
+            keep = d.view.view_range()
+            d._head = rate + 10                                  # as if the playback had just jumped back
+            d._keep_cursor_visible()
+            assert d.view.view_range() == keep, "the seam view followed the cursor"
+            d.view.set_cursor(d._head)
+            t_paint = time.perf_counter()
+            for _ in range(30):
+                d.view.repaint()
+            per = (time.perf_counter() - t_paint) / 30 * 1000
+            assert per < 60, f"a repaint of the zoomed seam view takes {per:.0f} ms"
             d.chk_seamview.setChecked(False)
             d.discard_changes()
             d.close()
-            s.note = "view stays put when switched on/off, timeline = file up to the loop end + the loop's beginning, clicks map to the right sample"
+            s.note = f"repaint {per:.1f} ms, view stays put when switched on/off and while playing, timeline = file up to the loop end + the loop's beginning, clicks map to the right sample"
 
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
