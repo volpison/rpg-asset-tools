@@ -7,6 +7,9 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Loop editor, seam view: a "Seam view" option (and a "Zoom to seam" button) that, after the loop end, shows
+  the beginning of the loop instead of the file's real outro, so the join can be judged by eye. The grid, the
+  ruler and clicks follow it.
 - Loop editor, step 4 (suggest loops): "Suggest loops..." compares the song with itself and lists the best loop
   points (start, end, length, match %). Use one, or use it and hear the seam; nothing is saved until "Save tags...".
   It can keep the current start or end and look for the other point only.

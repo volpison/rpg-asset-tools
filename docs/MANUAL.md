@@ -280,6 +280,22 @@ helps with that:
   editor; it is not written to the file. A song with a changing tempo needs a different approach (one fixed
   tempo per song for now).
 
+**Seam view**
+
+Some loops are best found by hand, by looking at the join. Turn on **Seam view** (next to the zoom buttons)
+and the editor zooms to the loop end and changes what lies to its right: instead of the rest of the file (the
+real outro), it shows **what the game plays after the jump, the beginning of the loop** from the loop start
+on. That part is drawn in orange and labelled "after the jump". The two waves meet at the dashed white line, so
+you can see whether the shape, the level and the beat carry on across the join, and, zoomed in, whether the
+two sides meet at the same height. *Zoom to seam* does the same zoom without changing what is shown.
+
+* The beat grid and the time ruler follow: to the right of the jump they show the positions of the loop's
+  beginning (the numbers there are the file's own times, so they start again from the loop start).
+* Clicking in the orange part places the cursor at the matching sample of the loop's beginning (the sample
+  you would hear), and the cursor shows a dashed twin on the other side of the jump.
+* Drag the loop markers as usual and the picture follows. The view shows at most 15 seconds after the jump.
+* It only changes how the wave is drawn. Nothing is written to the file and playing is not affected.
+
 **Suggest loops**
 
 *Suggest loops...* (beside *End = cursor*) compares the song with itself to find places where the music
