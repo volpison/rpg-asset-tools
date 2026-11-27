@@ -7,6 +7,7 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Changed
+- The "Play audio..." window is gone (its controls never worked for Ogg on Windows). The details panel has an **Open in external player...** button for every sound (BGM, BGS, ME, SE), next to **Loop editor...**, also in the right-click menu and on a double-click. It opens the file directly, with no confirmation question.
 - Loop editor layout: the controls are in boxes (*Play*, *View*, *Loop points*, *Tools*), the tools (Suggest loops, beat grid, bars) are apart from the player buttons, and *Revert* and *Save tags...* are at the lower right.
 
 ### Added

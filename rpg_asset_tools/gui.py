@@ -35,7 +35,7 @@ import batch_tools
 import usage
 from annotations import Annotations, PRESET_COLORS
 from asset_paths import ASSET_ROOTS, CATEGORY_LABELS, AUDIO_CATEGORIES, LOOP_CATEGORIES, resolve_ogg_path
-from audio_preview import AudioPreviewDialog, resolve_audio_path
+from audio_preview import open_in_external_player, resolve_audio_path
 from image_preview import (
     ImagePreviewDialog, ThumbnailLabel, is_image_path, resolve_preview_path,
 )
@@ -577,9 +577,10 @@ class MainWindow(QMainWindow):
         self.d_help.setWordWrap(True)
         self.thumb = ThumbnailLabel()
         self.thumb.setFixedHeight(170)
-        self.btn_play = QPushButton("Play audio...")
-        self.btn_play.clicked.connect(self.open_full_preview)
-        self.btn_play.hide()
+        self.btn_external = QPushButton("Open in external player...")
+        self.btn_external.setToolTip("Play this sound with the default player of your system.")
+        self.btn_external.clicked.connect(self.open_external_player)
+        self.btn_external.hide()
         self.btn_loop = QPushButton("Loop editor...")
         self.btn_loop.setToolTip("Show the waveform and the loop points (LOOPSTART / LOOPLENGTH) of this music.")
         self.btn_loop.clicked.connect(self.open_loop_editor)
@@ -587,7 +588,7 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.d_title)
         rl.addWidget(self.d_help)
         rl.addWidget(self.thumb)
-        rl.addWidget(self.btn_play)
+        rl.addWidget(self.btn_external)
         rl.addWidget(self.btn_loop)
         rl.addWidget(QLabel("Used in:"))
         self.ref_list = QListWidget()
@@ -859,7 +860,7 @@ class MainWindow(QMainWindow):
         self._loading_details = True
         try:
             self.ref_list.clear()
-            self.btn_play.hide()
+            self.btn_external.hide()
             self.btn_loop.hide()
             self.thumb.hide()
             self.thumb.set_image(QPixmap())
@@ -902,7 +903,7 @@ class MainWindow(QMainWindow):
                 self.thumb.set_image(QPixmap(str(img)))
                 self.thumb.show()
             elif a["category"] in AUDIO_CATEGORIES and resolve_audio_path(self.game, a):
-                self.btn_play.show()
+                self.btn_external.show()
                 if a["category"] in LOOP_CATEGORIES:
                     self.btn_loop.show()
         finally:
@@ -917,12 +918,25 @@ class MainWindow(QMainWindow):
         if img:
             dlg = ImagePreviewDialog(img, a["name"], self)
         else:
-            aud = resolve_audio_path(self.game, a)
-            if not aud:
-                return
-            dlg = AudioPreviewDialog(aud, a["name"], self)
+            self.open_external_player()                  # a sound: play it in the system's player
+            return
         self._previews = [d for d in self._previews if d.isVisible()] + [dlg]
         dlg.show()
+
+    def open_external_player(self):
+        """Play the selected sound with the system's default player."""
+        sel = self._selected()
+        if len(sel) != 1 or not self.game or sel[0]["category"] not in AUDIO_CATEGORIES:
+            return
+        aud = resolve_audio_path(self.game, sel[0])
+        if not aud:
+            self.statusBar().showMessage("This asset has no audio file on disk.", 5000)
+            return
+        if open_in_external_player(aud, self, ask=False):
+            self.statusBar().showMessage(f"Opened {aud.name} in your default player.", 5000)
+        else:
+            self.statusBar().showMessage(
+                f"Your system could not open {aud.name}. Is a player installed for this file type?", 8000)
 
     def open_loop_editor(self):
         sel = self._selected()
@@ -1236,8 +1250,10 @@ class MainWindow(QMainWindow):
         menu.addAction("Rename...  (F2)").triggered.connect(self.rename_selected)
         if len(sel) == 1:
             menu.addAction("Where is this used?  (Ctrl+U)").triggered.connect(self.show_usage)
-            if sel[0]["category"] in LOOP_CATEGORIES and resolve_audio_path(self.game, sel[0]):
-                menu.addAction("Loop editor...").triggered.connect(self.open_loop_editor)
+            if sel[0]["category"] in AUDIO_CATEGORIES and resolve_audio_path(self.game, sel[0]):
+                menu.addAction("Open in external player...").triggered.connect(self.open_external_player)
+                if sel[0]["category"] in LOOP_CATEGORIES:
+                    menu.addAction("Loop editor...").triggered.connect(self.open_loop_editor)
         if any(a["status"] == "unused" for a in sel):
             menu.addAction("Move unused to _unused/...").triggered.connect(self.move_unused)
         keep_all = all(a["ignored"] for a in sel)

@@ -213,6 +213,45 @@ def main() -> int:
         pump()
         assert win._selected(), "selection did not register"
 
+    with step("external player button for sounds") as s:
+        def row_of(category):
+            for r in range(win.table.rowCount()):
+                idx = win.table.item(r, 2).data(Qt.UserRole)
+                if idx is not None and win.shown[idx]["category"] == category:
+                    return r
+            return None
+        opened = []
+        real_open = gui.open_in_external_player
+        gui.open_in_external_player = lambda path, parent=None, ask=True: (opened.append((path.name, ask)), True)[1]
+        try:
+            for cat in ("bgm", "se"):
+                r = row_of(cat)
+                assert r is not None, f"the fake project has no {cat} row"
+                win.table.selectRow(r)
+                pump()
+                assert not win.btn_external.isHidden(), f"no external player button for a {cat}"
+                assert win.btn_external.text().startswith("Open in external player")
+                assert not hasattr(win, "btn_play"), "the old Play audio button is still there"
+                win.btn_external.click()
+            assert len(opened) == 2 and all(not ask for _n, ask in opened), opened   # no confirmation question
+            assert all(n.endswith(".ogg") for n, _a in opened), opened
+            r = row_of("bgm")
+            win.table.selectRow(r)
+            pump()
+            assert not win.btn_loop.isHidden(), "the loop editor button is missing for a bgm"
+            r = row_of("se")
+            win.table.selectRow(r)
+            pump()
+            assert win.btn_loop.isHidden(), "an se must not get a loop editor button"
+            r = row_of("picture")
+            if r is not None:
+                win.table.selectRow(r)
+                pump()
+                assert win.btn_external.isHidden(), "a picture must not get the external player button"
+        finally:
+            gui.open_in_external_player = real_open
+        s.note = f"shown for bgm and se, opens {opened[0][0]} directly (no question), hidden for pictures"
+
     with step("progress window opens and closes") as s:
         from progress_gui import ProgressDialog
         p = ProgressDialog("Test")

@@ -114,7 +114,12 @@ window. If the UI thread stops for about 8 seconds, every thread's stack goes to
 
 ## Decisions
 
-**Loop editor: optional numpy + soundfile for decoding.** `audio_preview.py` already notes that QtMultimedia
+**Main window: no in-app preview for sounds.** The small "Play audio" window (QMediaPlayer; volume, pitch and pan
+never worked for Ogg on Windows) was removed. A sound is played by **Open in external player...**, which hands the
+file to the system's default player with no confirmation (`audio_preview.open_in_external_player(ask=False)`; the
+module keeps only that and the file lookup). The loop editor plays music itself, through its own sound path.
+
+**Loop editor: optional numpy + soundfile for decoding.** QtMultimedia (the old "Play audio" window used it)
 often cannot decode `.ogg` on Windows, and the editor needs exact sample counts. soundfile (libsndfile) and
 numpy are permissively licensed, and the app starts and works without them (`audiodecode.missing_dependencies()`,
 `requirements-audio.txt`). Left out: decoding through `QAudioDecoder` (codec availability varies by machine).
