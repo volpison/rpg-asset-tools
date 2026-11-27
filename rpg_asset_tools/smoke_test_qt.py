@@ -701,6 +701,96 @@ def main() -> int:
             d.close()
             s.note = "window opens, search runs in the background, a suggestion is used and heard, nothing saved"
 
+    with step("loop editor seam view") as s:
+        import audiodecode
+        missing = audiodecode.missing_dependencies()
+        if missing:
+            s.note = "SKIPPED: " + " and ".join(missing) + " not installed"
+        else:
+            import numpy as np
+            import soundfile
+            import loopmath
+            import loop_editor_gui
+
+            vg = tmp / "seam_game"                    # never the user's own project
+            (vg / "audio" / "bgm").mkdir(parents=True)
+            rate = 22050
+            t = np.arange(rate * 6) / rate
+            wave = (0.3 * np.sin(2 * np.pi * 220 * t) * np.exp(-(t % 2.0) * 2)).astype("float32")
+            ogg = vg / "audio" / "bgm" / "Seam.ogg"
+            soundfile.write(str(ogg), np.column_stack([wave, wave]), rate, format="OGG", subtype="VORBIS")
+            d = loop_editor_gui.open_loop_editor(ogg, "Seam", win, game=vg)
+            assert d is not None, "the editor did not open"
+            t0 = time.monotonic()
+            while not (d.ready or d.error):
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 30, "decoding did not finish"
+            assert not d.error, d.error
+            assert d.set_loop_points(rate, rate * 3)          # loop 1 s .. 3 s; the file goes on to 6 s
+            d.view.fit()
+            pump()
+            plain = d.view.grab().toImage()
+            total_before = d.view.total()
+            assert total_before == rate * 6, total_before
+            d.view.set_view(rate * 2, rate * 2)                                # looking at the loop end
+            keep = d.view.view_range()
+            d.chk_seamview.setChecked(True)
+            pump()
+            assert d.view.seam_view
+            assert d.view.total() == rate * 3 + rate * 2, d.view.total()      # up to the end + the loop's 2 s
+            assert d.view.view_range() == keep, (d.view.view_range(), keep)   # the view did not move
+            d.chk_seamview.setChecked(False)
+            pump()
+            assert d.view.view_range() == keep, "switching it off moved the view"
+            d.chk_seamview.setChecked(True)
+            pump()
+            assert d.view.view_range() == keep, "switching it on again moved the view"
+            assert d.view.grab().toImage() != plain, "the seam view was not drawn"
+            w = d.view.width()
+            x_end = d.view.x_of(rate * 3)
+            assert 0 < x_end < w, x_end
+            right = d.view.frame_at(min(x_end + 40, w - 1))                   # a place after the jump
+            assert rate <= right < rate * 3, f"after the jump the file's own start is meant, got {right}"
+            left = d.view.frame_at(max(x_end - 40, 0))
+            assert left < rate * 3 and left > rate, left
+            d.view.seek_requested.emit(right)                                 # clicking there places the cursor in the loop
+            pump()
+            assert d._head == right, (d._head, right)
+            d.chk_seamview.setChecked(False)
+            pump()
+            assert not d.view.seam_view and d.view.total() == rate * 6
+            d._zoom_to_seam()
+            first, n = d.view.view_range()
+            assert abs((first + n / 2) - rate * 3) < rate * 0.2, (first, n)
+            # a loop that ends where the file ends: the orange part would be off-screen, so the view scrolls to it
+            last = d._audio.frames
+            assert d.set_loop_points(rate, last)
+            d.view.set_view(last - rate * 2, rate * 2)
+            d.chk_seamview.setChecked(True)
+            pump()
+            assert d.view.x_of(last) < d.view.width() * 0.9, "the part after the jump is out of sight"
+            assert d.view.view_range()[1] == rate * 2
+            # zoomed in far with the seam view on: the view must not follow the cursor (it used to scroll on
+            # every tick after the jump and starve the sound), and a repaint must be cheap
+            d.view.set_view(last - 220, 440)
+            d.chk_seamview.setChecked(True)
+            pump()
+            keep = d.view.view_range()
+            d._head = rate + 10                                  # as if the playback had just jumped back
+            d._keep_cursor_visible()
+            assert d.view.view_range() == keep, "the seam view followed the cursor"
+            d.view.set_cursor(d._head)
+            t_paint = time.perf_counter()
+            for _ in range(30):
+                d.view.repaint()
+            per = (time.perf_counter() - t_paint) / 30 * 1000
+            assert per < 60, f"a repaint of the zoomed seam view takes {per:.0f} ms"
+            d.chk_seamview.setChecked(False)
+            d.discard_changes()
+            d.close()
+            s.note = f"repaint {per:.1f} ms, view stays put when switched on/off and while playing, timeline = file up to the loop end + the loop's beginning, clicks map to the right sample"
+
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
         if not read_only and pool["n"] == 0:

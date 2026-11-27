@@ -165,10 +165,16 @@ with a seam score below 0.3 are dropped, and the windows at the file edges count
 a short match at the very edge cannot win. No BPM is needed. It runs in a worker thread with a cancel flag.
 Left out: tempo or key analysis, learning-based methods, crossfading the loop.
 
+**Loop editor: seam view is a timeline remap, not a second widget.** In seam view the waveform's timeline is
+the file up to the loop end followed by the loop's beginning (`loopmath.seam_source`, `seam_extent`,
+`seam_tail`): `WaveformView.total()` returns the longer or shorter timeline, `frame_at` maps a click back to
+the file sample that is heard there, and the part after the jump is painted with a sample shift (wave, grid
+and ruler share one `shift` argument). The real outro is not shown at all, which is the point; the tail is
+capped at 15 s so a loop ending at the end of a long song stays readable. Dragging and typed values still
+work on real sample numbers. Left out: seam view during playback follow, a crossfade preview.
+
 ## Ideas for later
 
-* **Seam view:** an option to show, at the end of the loop, the waveform of the loop's beginning (after the
-  loop-start marker) instead of the file's real "outro", so the join can be judged by eye. (Requested by the user.)
 * Tap tempo / BPM detection; a grid per section for songs that change tempo.
 
 ## Conventions

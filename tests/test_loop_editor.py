@@ -689,6 +689,24 @@ class TestLoopMath(unittest.TestCase):
         self.assertEqual((v.start, v.end, v.length, v.status), (100, 400, 300, loopmath.COMPLETE))
         self.assertEqual(v.notes, ())
 
+    def test_seam_view_timeline(self):
+        v = self.view(100, 300, total=2000)                   # loop 100..400 in a file of 2000
+        self.assertEqual(loopmath.seam_source(v, 399), 399)
+        self.assertEqual(loopmath.seam_source(v, 400), 100)   # the first sample after the jump
+        self.assertEqual(loopmath.seam_source(v, 450), 150)
+        self.assertEqual(loopmath.seam_tail(v, 44100), 300)   # a short loop: its whole length
+        self.assertEqual(loopmath.seam_extent(v, 44100), 700)  # the real outro is not part of it
+
+    def test_seam_view_tail_is_capped_and_end_of_file_works(self):
+        v = self.view(0, 44100 * 100, total=44100 * 100)      # a loop that ends exactly at the file end
+        self.assertEqual(loopmath.seam_tail(v, 44100), int(loopmath.SEAM_TAIL_SECONDS * 44100))
+        self.assertGreater(loopmath.seam_extent(v, 44100), 44100 * 100)
+
+    def test_seam_window_is_centred_on_the_jump(self):
+        v = self.view(100, 300, total=2000)
+        first, n = loopmath.seam_window(v, 100, seconds=2.0)
+        self.assertEqual((first, n), (400 - 200, 400))
+
     def test_end_exactly_at_file_end_is_fine(self):
         self.assertEqual(self.view(200, 800).status, loopmath.COMPLETE)
 

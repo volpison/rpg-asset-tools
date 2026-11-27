@@ -168,9 +168,11 @@ class WaveformView(QWidget):
         self._span = 1.0
         self._cursor = None
         self._hover = -1
+        self._hover_x = 0.0
         self._grid = None                 # a beatgrid.Grid to draw, or None
         self._editable = False
         self._drag = None                 # "start" / "end" while a marker is being dragged
+        self._seam = False                # seam view: after the loop end, show the loop's beginning
         self._message = "Reading the sound..."
 
     # ----- data
@@ -184,6 +186,16 @@ class WaveformView(QWidget):
     def set_grid(self, grid) -> None:
         self._grid = grid
         self.update()
+
+    def set_seam_view(self, on: bool) -> None:
+        self._seam = bool(on)
+        if self._pyr is not None:
+            self.set_view(self._start, self._span)           # the timeline's length changed
+        self.update()
+
+    @property
+    def seam_view(self) -> bool:
+        return self._seam and self._loop is not None and self._pyr is not None
 
     def set_editable(self, on: bool) -> None:
         self._editable = bool(on)
@@ -201,6 +213,8 @@ class WaveformView(QWidget):
 
     def set_loop(self, loop) -> None:
         self._loop = loop
+        if self._seam and self._pyr is not None:
+            self.set_view(self._start, self._span)
         self.update()
 
     def set_cursor(self, frame) -> None:
@@ -210,7 +224,17 @@ class WaveformView(QWidget):
 
     # ----- view
     def total(self) -> int:
-        return self._pyr.frames if self._pyr is not None else 0
+        """Length of the timeline shown: the file, or in seam view the file up to the loop end and
+        then the loop's beginning."""
+        if self._pyr is None:
+            return 0
+        if self.seam_view:
+            return loopmath.seam_extent(self._loop, self._rate)
+        return self._pyr.frames
+
+    def _source(self, frame: int) -> int:
+        """The sample of the file heard at this place of the timeline."""
+        return loopmath.seam_source(self._loop, frame) if self.seam_view else frame
 
     def view_range(self) -> tuple[float, float]:
         return self._start, self._span
@@ -245,8 +269,8 @@ class WaveformView(QWidget):
         return (frame - self._start) / self._span * self.width()
 
     def frame_at(self, x: float) -> int:
-        f = int(self._start + x / max(self.width(), 1) * self._span)
-        return min(max(f, 0), max(self.total() - 1, 0))
+        f = self._source(int(self._start + x / max(self.width(), 1) * self._span))
+        return min(max(f, 0), max(self._pyr.frames - 1, 0)) if self._pyr is not None else 0
 
     # ----- mouse
     def _marker_at(self, x: float):
@@ -262,7 +286,7 @@ class WaveformView(QWidget):
     def _frame_edge(self, x: float) -> int:
         """Sample under x, where the end of the file counts too (a loop may end exactly there)."""
         f = int(round(self._start + x / max(self.width(), 1) * self._span))
-        return min(max(f, 0), self.total())
+        return min(max(f, 0), self._pyr.frames if self._pyr is not None else 0)
 
     def mouseMoveEvent(self, ev):
         if self._pyr is None:
@@ -272,6 +296,7 @@ class WaveformView(QWidget):
             self.marker_dragged.emit(self._drag, self._frame_edge(x))
         else:
             self.setCursor(Qt.SizeHorCursor if self._marker_at(x) else Qt.ArrowCursor)
+        self._hover_x = x
         self._hover = self.frame_at(x)
         self.hovered.emit(self._hover)
         self.update()
@@ -325,12 +350,34 @@ class WaveformView(QWidget):
         wave_h = max(h - wave_top - 2, 10)
         mid = wave_top + wave_h / 2
         self._paint_loop_region(p, w, wave_top, wave_h)
-        self._paint_wave(p, w, wave_top, wave_h, mid, pal)
-        self._paint_grid(p, w, wave_top, wave_h, text_color)
-        self._paint_ruler(p, w, text_color)
+        if self.seam_view:
+            loop = self._loop
+            x_end = min(max(self.x_of(loop.end), 0.0), float(w))
+            shift = loop.start - loop.end
+            if x_end > 0:                                    # the file up to the loop end (if it is in view)
+                p.save()
+                p.setClipRect(QRectF(0, 0, x_end, h))
+                self._paint_wave(p, w, wave_top, wave_h, mid, pal)
+                self._paint_grid(p, w, wave_top, wave_h, text_color)
+                self._paint_ruler(p, w, text_color)
+                p.restore()
+            if x_end < w:                                    # then what the game plays after the jump
+                p.save()
+                p.setClipRect(QRectF(x_end, 0, w - x_end, h))
+                p.fillRect(QRectF(x_end, wave_top, w - x_end, wave_h), QColor(_LOOP_COLOR.red(), _LOOP_COLOR.green(), _LOOP_COLOR.blue(), 22))
+                self._paint_wave(p, w, wave_top, wave_h, mid, pal, shift, _LOOP_COLOR.darker(110))
+                self._paint_grid(p, w, wave_top, wave_h, text_color, shift)
+                self._paint_ruler(p, w, text_color, shift)
+                p.restore()
+        else:
+            self._paint_wave(p, w, wave_top, wave_h, mid, pal)
+            self._paint_grid(p, w, wave_top, wave_h, text_color)
+            self._paint_ruler(p, w, text_color)
         self._paint_loop_bar(p, w)
+        if self.seam_view:
+            self._paint_seam_marks(p, w, h)
         if self._hover >= 0:
-            x = self.x_of(self._hover)
+            x = self._hover_x if self.seam_view else self.x_of(self._hover)
             p.setPen(QPen(QColor(128, 128, 128, 160), 1))
             p.drawLine(QPointF(x, _RULER_H), QPointF(x, h))
         if self._cursor is not None:
@@ -351,18 +398,20 @@ class WaveformView(QWidget):
             fill.setAlpha(40)
             p.fillRect(QRectF(x0, top, x1 - x0, height), fill)
 
-    def _paint_wave(self, p, w, top, height, mid, pal):
+    def _paint_wave(self, p, w, top, height, mid, pal, shift=0, color=None):
+        """The wave for the timeline [view start, view end). `shift` is added to the sample numbers
+        (the seam view's part after the jump shows the loop's beginning)."""
         waveform, _ = _np()
-        start, span = self._start, self._span
+        start, span = self._start + shift, self._span
         scale = height / 2 * 0.95
-        color = pal.color(QPalette.ColorRole.Highlight)
+        color = color or pal.color(QPalette.ColorRole.Highlight)
         p.setPen(QPen(pal.color(QPalette.ColorRole.Mid), 1))
         p.drawLine(0, int(mid), w, int(mid))
         spp = span / max(w, 1)
         if spp < 1.5:                                        # a line through the single samples
             frames, vals = waveform.samples_in_view(self._pyr, start, start + span)
             if len(frames):
-                pts = [QPointF(self.x_of(f), mid - v * scale) for f, v in zip(frames.tolist(), vals.tolist())]
+                pts = [QPointF(self.x_of(f - shift), mid - v * scale) for f, v in zip(frames.tolist(), vals.tolist())]
                 p.setPen(QPen(color, 1.5))
                 p.drawPolyline(QPolygonF(pts))
                 if spp < 0.25:
@@ -379,12 +428,12 @@ class WaveformView(QWidget):
                 continue                                     # silence or outside the audio
             p.drawLine(QPointF(x + 0.5, a), QPointF(x + 0.5, max(b, a + 1)))
 
-    def _paint_grid(self, p, w, top, height, text_color):
+    def _paint_grid(self, p, w, top, height, text_color, shift=0):
         """Beat lines (thin) and bar lines (strong, numbered) over the wave."""
         grid = self._grid
         if grid is None or self._span <= 0:
             return
-        rate, start, span = self._rate, self._start, self._span
+        rate, start, span = self._rate, self._start + shift, self._span
         beat_px = grid.beat_length(rate) / span * w
         if span / grid.beat_length(rate) > 4000:
             return                                           # far too many lines to be useful
@@ -398,7 +447,7 @@ class WaveformView(QWidget):
                 continue
             if first and bar_px < 4:
                 continue
-            x = self.x_of(frame)
+            x = self.x_of(frame - shift)
             p.setPen(QPen(bar_color if first else beat_color, 1.5 if first else 1))
             p.drawLine(QPointF(x, top), QPointF(x, top + height))
             if first and bar_px >= 40:
@@ -406,8 +455,8 @@ class WaveformView(QWidget):
                 p.setPen(QPen(text_color, 1))
                 p.drawText(QPointF(x + 3, top + 11), str(number))
 
-    def _paint_ruler(self, p, w, text_color):
-        rate, start, span = self._rate, self._start, self._span
+    def _paint_ruler(self, p, w, text_color, shift=0):
+        rate, start, span = self._rate, self._start + shift, self._span
         step = loopmath.nice_tick_seconds(span / rate, w)
         k0 = math.ceil(start / rate / step)
         k1 = math.floor((start + span) / rate / step)
@@ -415,12 +464,39 @@ class WaveformView(QWidget):
         if k1 - k0 > 400:
             return
         for k in range(k0, k1 + 1):
-            x = self.x_of(k * step * rate)
+            x = self.x_of(k * step * rate - shift)
             p.drawLine(QPointF(x, _RULER_H - 6), QPointF(x, _RULER_H))
             label = loopmath.format_time(int(round(k * step * rate)), rate)
             if step >= 1:
                 label = label[:-4]                           # whole seconds: no ".000"
             p.drawText(QPointF(x + 3, _RULER_H - 8), label)
+
+    def _paint_seam_marks(self, p, w, h):
+        """The jump itself, a label for the part after it and the cursor's twin on the other side."""
+        loop = self._loop
+        x_end = self.x_of(loop.end)
+        x_far = self.x_of(loop.end + loopmath.seam_tail(loop, self._rate))
+        rect = QRectF(max(x_end, 0.0), _RULER_H, min(x_far, float(w)) - max(x_end, 0.0), _BAR_H)
+        if rect.width() > 0:
+            fill = QColor(_LOOP_COLOR)
+            fill.setAlpha(110)
+            p.fillRect(rect, fill)
+            p.save()
+            p.setClipRect(rect)
+            p.setPen(QColor(0, 0, 0))
+            p.drawText(rect.adjusted(6, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft,
+                       f"after the jump: the loop from LOOPSTART {loop.start}")
+            p.restore()
+        if 0 <= x_end <= w:
+            p.setPen(QPen(QColor(255, 255, 255), 1, Qt.DashLine))
+            p.drawLine(QPointF(x_end, _RULER_H + _BAR_H), QPointF(x_end, h))
+        c = self._cursor                                     # the cursor also exists after the jump
+        if c is not None and loop.start <= c < loop.end:
+            ghost = loop.end + (c - loop.start)
+            x = self.x_of(ghost)
+            if ghost < loopmath.seam_extent(loop, self._rate) and -2 <= x <= w + 2:
+                p.setPen(QPen(_CURSOR_COLOR, 1, Qt.DashLine))
+                p.drawLine(QPointF(x, 0), QPointF(x, h))
 
     def _paint_loop_bar(self, p, w):
         loop = self._loop
@@ -548,12 +624,20 @@ class LoopEditorDialog(QDialog):
         for text, tip, fn in (("-", "Zoom out", lambda: self.view.zoom(1.5)),
                               ("+", "Zoom in", lambda: self.view.zoom(1 / 1.5)),
                               ("Fit", "Show the whole file", self.view.fit),
-                              ("Zoom to loop", "Zoom to the loop", self._zoom_to_loop)):
+                              ("Zoom to loop", "Zoom to the loop", self._zoom_to_loop),
+                              ("Zoom to seam", "Zoom to the loop end, where the music jumps back", self._zoom_to_seam)):
             b = QPushButton(text)
             b.setToolTip(tip)
             b.clicked.connect(fn)
             row.addWidget(b)
             self.zoom_btns.append(b)
+        self.chk_seamview = QCheckBox("Seam view")
+        self.chk_seamview.setToolTip("After the loop end, show the loop's beginning (what the game plays after "
+                                     "the jump) instead of the rest of the file, so you can judge the join by "
+                                     "eye. The part after the jump is orange. Clicking there places the cursor "
+                                     "at the matching sample of the loop's beginning.")
+        self.chk_seamview.toggled.connect(self._on_seam_view)
+        row.addWidget(self.chk_seamview)
         lay.addLayout(row)
 
         grid = QGridLayout()
@@ -750,7 +834,7 @@ class LoopEditorDialog(QDialog):
     def _set_controls_enabled(self, on: bool) -> None:
         for wdg in (self.btn_play, self.btn_stop, self.btn_from_loop, self.btn_seam,
                     self.chk_loop, self.volume, self.scroll, *self.zoom_btns,
-                    self.btn_set_start, self.btn_set_end, self.btn_suggest, self.chk_snap, *self.ed.values(),
+                    self.btn_set_start, self.btn_set_end, self.btn_suggest, self.chk_snap, self.chk_seamview, *self.ed.values(),
                     self.chk_grid, self.ed_bpm, self.ed_offset, self.btn_offset_cursor, self.spin_bpb,
                     self.cmb_gridsnap, self.spin_bars, self.btn_bars, self.btn_bpm_from_loop):
             wdg.setEnabled(on)
@@ -1166,6 +1250,24 @@ class LoopEditorDialog(QDialog):
         return clicked is drop
 
     # ----- view helpers
+    def _zoom_to_seam(self) -> None:
+        if self._loop is None or not self.ready:
+            return
+        first, n = loopmath.seam_window(self._loop, self._audio.sample_rate)
+        self.view.set_view(first, n)
+
+    def _on_seam_view(self, on: bool) -> None:
+        """Switch the seam view on or off WITHOUT moving the view, so the same place can be compared
+        with and without it. The one exception: when the loop end is at the right edge (a loop that
+        ends where the file ends), the orange part would be off-screen, so the view scrolls just far
+        enough to show it, with the loop end at 60 % of the width."""
+        self.view.set_seam_view(on)
+        if on and self._loop is not None:
+            start, span = self.view.view_range()
+            end = self._loop.end
+            if start < end <= start + span and start + span - end < 0.15 * span:
+                self.view.set_view(end - 0.6 * span, span)
+
     def _zoom_to_loop(self) -> None:
         if self._loop is None:
             return
@@ -1330,6 +1432,10 @@ class LoopEditorDialog(QDialog):
         self._keep_cursor_visible()
 
     def _keep_cursor_visible(self) -> None:
+        if self.view.seam_view:
+            return          # in seam view the view stays on the jump: the cursor crosses it (and shows its
+                            # twin after the jump) on every pass; following it would re-scroll and repaint
+                            # on every tick when zoomed in, and starve the sound feeder
         start, span = self.view.view_range()
         if span >= self.view.total():
             return

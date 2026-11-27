@@ -110,6 +110,31 @@ def seam_start(view: LoopView, rate: int, lead_seconds: float = 3.0) -> int:
     return max(0, view.end - int(lead_seconds * rate))
 
 
+SEAM_TAIL_SECONDS = 15.0          # the seam view shows at most this much of the loop's beginning after the end
+
+
+def seam_tail(view: LoopView, rate: int) -> int:
+    """How many samples of the loop's beginning the seam view shows after the loop end."""
+    return max(0, min(view.length, int(SEAM_TAIL_SECONDS * rate)))
+
+
+def seam_extent(view: LoopView, rate: int) -> int:
+    """Length of the seam view's timeline: the file up to the loop end, then the loop's beginning
+    (what the game plays after the jump) instead of whatever the file holds after the loop end."""
+    return view.end + seam_tail(view, rate)
+
+
+def seam_source(view: LoopView, frame: int) -> int:
+    """The sample of the file that is heard at `frame` of the seam view's timeline."""
+    return frame if frame < view.end else view.start + (frame - view.end)
+
+
+def seam_window(view: LoopView, rate: int, seconds: float = 2.0) -> tuple[int, int]:
+    """(first sample, number of samples) of a view centred on the jump, `seconds` each side."""
+    half = max(1, int(seconds * rate))
+    return view.end - half, 2 * half
+
+
 def nice_tick_seconds(span_seconds: float, width_px: int, min_px: int = 90) -> float:
     """A round time step (1 ms ... 10 min) that gives ticks at least `min_px` apart."""
     if span_seconds <= 0 or width_px <= 0:
