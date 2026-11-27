@@ -205,8 +205,9 @@ The loop editor shows these numbers on the waveform, lets you listen to them, ch
 back into the file. **Nothing is written until you press *Save tags...*.**
 
 **Open it:** select one BGM or BGS row, then press *Loop editor...* in the details panel, or right-click
-the row. (ME and SE play once, so they have no loop editor.) Only `.ogg` files open; an `.m4a` file or an
-Ogg Opus file gets an explanation instead.
+the row. For a quick listen with no editing, *Open in external player...* (also in the details panel, the
+right-click menu and on a double-click) plays any sound, ME and SE too, with your system's default player. (ME and SE play once, so they have no loop
+editor.) The loop editor opens only `.ogg` files; an `.m4a` file or an Ogg Opus file gets an explanation instead.
 
 **One-time setup:** the loop editor needs two small extra packages, which the rest of the app does not:
 
