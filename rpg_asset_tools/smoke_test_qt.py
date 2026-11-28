@@ -895,6 +895,70 @@ def main() -> int:
             d.close()
             s.note = note
 
+    with step("loop editor BPM finder") as s:
+        import audiodecode
+        missing = audiodecode.missing_dependencies()
+        if missing:
+            s.note = "SKIPPED: " + " and ".join(missing) + " not installed"
+        else:
+            import numpy as np
+            import soundfile
+            import loop_editor_gui
+
+            bg = tmp / "bpm_game"                     # never the user's own project
+            (bg / "audio" / "bgm").mkdir(parents=True)
+            rate = 22050
+            rng = np.random.default_rng(3)
+            n = rate * 30
+            x = rng.normal(0, 0.02, n).astype("float32")
+            beat = 0.5                                # 120 BPM, first beat at 0.4 s
+            seg = np.arange(int(0.12 * rate)) / rate
+            for k in range(58):
+                t0 = int((0.4 + k * beat) * rate)
+                if t0 + len(seg) >= n:
+                    break
+                strong = k % 4 == 0
+                x[t0:t0 + len(seg)] += (0.9 if strong else 0.5) * np.sin(2 * np.pi * (60 if strong else 90) * seg) * np.exp(-seg * 30)
+            ogg = bg / "audio" / "bgm" / "Beat.ogg"
+            soundfile.write(str(ogg), np.column_stack([x, x]), rate, format="OGG", subtype="VORBIS")
+            d = loop_editor_gui.open_loop_editor(ogg, "Beat", win, game=bg)
+            assert d is not None, "the editor did not open"
+            t0 = time.monotonic()
+            while not (d.ready or d.error):
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 30, "decoding did not finish"
+            assert not d.error, d.error
+            dlg = d.bpm_finder()
+            assert dlg is not None and dlg.isVisible(), "the BPM finder did not open"
+            dlg.detect()
+            t0 = time.monotonic()
+            while dlg.searching:
+                APP.processEvents()
+                time.sleep(0.01)
+                assert time.monotonic() - t0 < 60, "the detection did not finish"
+            assert dlg.tempos and dlg.table.rowCount() == len(dlg.tempos), dlg.status.text()
+            top = dlg.tempos[0]
+            assert abs(top.bpm - 120.0) < 0.2, top
+            err = ((top.offset / rate - 0.4) + 1.0) % 2.0 - 1.0          # to the bar line, bars are 2 s
+            assert abs(err) < 0.05, (top, err)
+            assert dlg.selected() is top
+            assert dlg.use_selected(with_offset=True)
+            assert d.grid is not None and abs(d.grid.bpm - top.bpm) < 0.01 and d.grid.offset == top.offset, d.grid
+            assert d.chk_grid.isChecked() and d.ed_bpm.text() == f"{top.bpm:g}", d.ed_bpm.text()
+            before = d.grid.offset
+            for k in range(8):                        # tap 100 BPM with a clock we control
+                dlg.tap(10.0 + k * 0.6)
+            assert dlg.tapped_bpm is not None and abs(dlg.tapped_bpm - 100.0) < 0.1, dlg.tapped_bpm
+            assert dlg.use_tapped()
+            assert abs(d.grid.bpm - 100.0) < 0.1 and d.grid.offset == before, "tapping must keep the first beat"
+            dlg.reset_taps()
+            assert dlg.tapped_bpm is None and not dlg.btn_use_tap.isEnabled()
+            dlg.close()
+            d.discard_changes()
+            d.close()
+            s.note = f"window opens, detects {top.bpm:g} BPM with the first beat {abs(err) * 1000:.0f} ms from the truth, uses it, tap tempo works and keeps the first beat"
+
     with step("process pool was used for the heavy scans") as s:
         s.note = f"pool started {pool['n']} time(s)"
         if not read_only and pool["n"] == 0:

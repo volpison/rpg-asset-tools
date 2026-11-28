@@ -18,8 +18,8 @@ the order can change, and each item becomes its own pull request. The *why* of f
    44 MB at 5 minutes, about 670 MB estimated at 20 minutes). Done: the waveform is built in chunks, the
    similarity matrix is capped (coarser frames for songs over about 6 minutes) and the Suggest window says so. Storing the
    song as 16-bit would halve its memory but is not needed yet. Closing the window already frees everything.
-4. **BPM finder:** tap tempo, and tempo detection from the audio. Later: a grid per section for songs that change
-   tempo.
+4. **BPM finder:** tap tempo and tempo detection from the audio (done: *BPM finder...* in the Tools box). Later: a
+   grid per section for songs that change tempo.
 5. **Cheaper repaint:** a repaint of the zoomed wave takes about 15 ms. Draw the wave once into an image and only
    redraw the cursor while playing.
 

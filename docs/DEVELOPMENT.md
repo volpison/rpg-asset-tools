@@ -50,6 +50,9 @@ call into them. Keep it that way: it is what makes most of the app testable with
 | `audiodecode.py` | the one place that decodes audio (optional numpy + soundfile; clear message when missing) |
 | `loopfind.py` | loop-point suggestions by self-comparison of the song (numpy, no Qt) |
 | `loop_suggest_gui.py` | the "Suggest loops" window: background search, candidate table |
+| `bpmdetect.py` | tempo and first-beat detection from the audio (numpy, no Qt) |
+| `taptempo.py` | tap tempo from tap times (pure) |
+| `bpm_finder_gui.py` | the "BPM finder" window: detect (background thread) + tap, candidate table |
 | `loop_editor_gui.py` | the loop editor window: `WaveformView`, `LoopEditorDialog`, `open_loop_editor()` |
 | `fit_table.py` | `FitTable`: fitted, resizable, reorderable columns with an empty-state overlay |
 | `filecache.py`, `filefacts.py`, `parallel.py` | per-file caches, cached file hashes / PNG sizes, process pool and `threaded_map` |
@@ -114,6 +117,19 @@ window. If the UI thread stops for about 8 seconds, every thread's stack goes to
 `~/.rpg_asset_tools/hang.log`. Set `RPGAT_NO_WATCHDOG=1` to disable it (the tests do).
 
 ## Decisions
+
+**Loop editor: BPM finder = onset autocorrelation + beat folding.** `bpmdetect.py` reduces the song to about
+11 kHz in chunks (never a whole mono copy), takes the rise of 24 log band energies every 11.6 ms (spectral flux,
+slow background removed, clipped), and finds rough tempi by autocorrelation with a mild preference for tempi near 120.
+Each rough tempo is refined by folding the onset strengths on a beat period (+-3 %, 241 steps) and keeping the
+period with the most peaked fold: that is what makes it exact to about 0.01 BPM (a 1 % error drifts a beat in 100)
+and it also gives the beat phase. Two heuristics: a slow tempo makes a sparser fold that scores higher, so when the
+half-way position of the best fold is at least half as busy as its peak the double tempo is used instead
+(`DOUBLE_RATIO`); and beat 1 of a bar is the strongest of the `beats_per_bar` alignments by onset plus
+un-compressed low-pitch (< 200 Hz) rise. The window-to-time lag (`LAG`) was calibrated on click tracks (beat error
+about 0 +- 3 ms). Tap tempo is a separate pure module: the average interval over the latest 16 taps, a pause over
+2 s starts again. Left out: tempo changes (a grid per section is still to do), time signatures other than the given
+beats per bar, learning-based beat trackers.
 
 **Loop editor: pan and pitch are playback-only.** Pitch is MZ's: a playback-rate change (speed and pitch together,
 50-150), done by linear-interpolation resampling in `loopplayback.render_rate` (positions are floats; the loop wrap

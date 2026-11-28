@@ -31,10 +31,12 @@ import history  # noqa: E402
 import loopedit  # noqa: E402
 if np is not None:
     import audiofx  # noqa: E402
+    import bpmdetect  # noqa: E402
     import loopfind  # noqa: E402
     import loopplayback as _lp  # noqa: E402
 import loopwrite  # noqa: E402
 import rename_engine  # noqa: E402
+import taptempo  # noqa: E402
 import loopmath  # noqa: E402
 import oggmeta  # noqa: E402
 import oggwrite  # noqa: E402
@@ -1243,6 +1245,145 @@ class TestLongSongs(unittest.TestCase):
         self.assertAlmostEqual((top.length / rate) % 4.0 or 4.0, 4.0, delta=0.05)
         self.assertGreaterEqual(top.start, 3 * rate - rate // 2)
         self.assertLessEqual(top.end, 19 * rate + rate // 2)
+
+
+class TestTapTempo(unittest.TestCase):
+    def test_steady_taps(self):
+        t = taptempo.TapTempo()
+        self.assertIsNone(t.tap(0.0))
+        self.assertIsNone(t.tap(0.5))                       # two taps are one interval: not enough yet
+        self.assertAlmostEqual(t.tap(1.0), 120.0)
+        for k in range(3, 10):
+            bpm = t.tap(k * 0.5)
+        self.assertAlmostEqual(bpm, 120.0)
+        self.assertEqual(t.count, 10)
+
+    def test_one_late_tap_hardly_matters(self):
+        t = taptempo.TapTempo()
+        times = [k * 0.5 for k in range(12)]
+        times[6] += 0.06                                    # one tap 60 ms late
+        for x in times:
+            bpm = t.tap(x)
+        self.assertAlmostEqual(bpm, 120.0, delta=0.5)
+
+    def test_a_pause_starts_again(self):
+        t = taptempo.TapTempo()
+        for k in range(5):
+            t.tap(k * 0.5)
+        self.assertIsNone(t.tap(10.0))                      # 8 s of silence: a new count
+        self.assertEqual(t.count, 1)
+        t.tap(10.4)
+        self.assertAlmostEqual(t.tap(10.8), 150.0)
+
+    def test_only_recent_taps_count_and_reset(self):
+        t = taptempo.TapTempo()
+        now = 0.0
+        for _ in range(8):                                  # 100 BPM
+            t.tap(now)
+            now += 0.6
+        for _ in range(taptempo.KEEP):                      # then 150 BPM: the old taps drop out
+            bpm = t.tap(now)
+            now += 0.4
+        self.assertAlmostEqual(bpm, 150.0, delta=0.1)
+        self.assertLessEqual(t.count, taptempo.KEEP)
+        t.reset()
+        self.assertEqual(t.count, 0)
+        self.assertIsNone(t.bpm)
+
+    def test_a_clock_going_backwards_does_not_break_it(self):
+        t = taptempo.TapTempo()
+        t.tap(5.0)
+        self.assertIsNone(t.tap(4.0))
+        self.assertEqual(t.count, 1)
+
+
+def _click_track(bpm, offset, secs=40.0, rate=22050, seed=0, equal=False, channels=2):
+    """Kicks on every beat (the first of every 4 stronger and lower) and hats between some of them."""
+    rng = np.random.default_rng(seed)
+    n = int(secs * rate)
+    x = rng.normal(0, 0.02, n).astype("float32")
+    beat = 60.0 / bpm
+    seg = np.arange(int(0.12 * rate)) / rate
+    k = 0
+    while offset + k * beat < secs - 0.3:
+        t0 = int((offset + k * beat) * rate)
+        strong = k % 4 == 0 and not equal
+        x[t0:t0 + len(seg)] += (0.9 if strong else 0.5) * np.sin(2 * np.pi * (60 if strong else 90) * seg) * np.exp(-seg * 30)
+        t1 = t0 + int(beat / 2 * rate)
+        if k % 2 == 1 and t1 + len(seg) < n:
+            x[t1:t1 + len(seg)] += 0.2 * rng.normal(0, 1, len(seg)) * np.exp(-seg * 60)
+        k += 1
+    return np.column_stack([x, x]) if channels == 2 else x
+
+
+@needs_numpy
+class TestBpmDetect(unittest.TestCase):
+    def test_tempo_and_first_beat(self):
+        for i, (bpm, off) in enumerate([(117.3, 0.33), (90.0, 1.0), (140.5, 0.9), (75.2, 0.5), (200.0, 0.2)]):
+            with self.subTest(bpm=bpm):
+                found = bpmdetect.detect(_click_track(bpm, off, seed=i), 22050)
+                self.assertTrue(found)
+                top = found[0]
+                self.assertAlmostEqual(top.bpm, bpm, delta=0.05)
+                bar = 4 * 60.0 / bpm                         # the bar's first beat, to within 25 ms
+                err = ((top.offset / 22050 - off) + bar / 2) % bar - bar / 2
+                self.assertLess(abs(err), 0.025, (top, err))
+                self.assertGreater(top.confidence, 0.5)
+
+    def test_sample_rate_44100_mono_input(self):
+        x = _click_track(100.0, 0.45, secs=30.0, rate=44100, channels=1)
+        top = bpmdetect.detect(x, 44100)[0]
+        self.assertAlmostEqual(top.bpm, 100.0, delta=0.05)
+        self.assertLess(abs(top.offset / 44100 - 0.45), 0.025)
+
+    def test_the_fast_tempo_wins_when_every_beat_is_alike(self):
+        top = bpmdetect.detect(_click_track(124.0, 0.5, secs=60.0, equal=True), 22050)[0]
+        self.assertAlmostEqual(top.bpm, 124.0, delta=0.1)   # not 62
+
+    def test_slow_tempo_stays_slow(self):
+        top = bpmdetect.detect(_click_track(62.0, 0.5, secs=60.0, equal=True), 22050)[0]
+        self.assertAlmostEqual(top.bpm, 62.0, delta=0.1)    # not 124
+
+    def test_half_and_double_are_offered(self):
+        found = bpmdetect.detect(_click_track(95.0, 0.5, secs=40.0), 22050)
+        self.assertAlmostEqual(found[0].bpm, 95.0, delta=0.1)
+        for wanted in (47.5, 190.0):                         # as a plain candidate or as a labelled one
+            self.assertTrue(any(abs(t.bpm - wanted) < 0.3 for t in found), (wanted, found))
+        self.assertTrue(all(t.note in ("", "half", "double") for t in found))
+
+    def test_a_part_of_the_song_gives_offsets_in_the_whole_file(self):
+        rate = 22050
+        song = _click_track(110.0, 0.2, secs=60.0)
+        first, last = 20 * rate, 50 * rate
+        top = bpmdetect.detect(song, rate, first=first, last=last)[0]
+        self.assertAlmostEqual(top.bpm, 110.0, delta=0.05)
+        self.assertGreaterEqual(top.offset, first)          # relative to the whole file, inside the part
+        self.assertLess(top.offset, first + 4 * 60.0 / 110.0 * rate + 1)
+        beat = 60.0 / 110.0
+        err = (((top.offset / rate) - 0.2) + beat / 2) % beat - beat / 2
+        self.assertLess(abs(err), 0.025)                    # and on a real beat of the whole song
+
+    def test_nothing_to_find(self):
+        rate = 22050
+        self.assertEqual(bpmdetect.detect(np.zeros((rate * 20, 2), np.float32), rate), [])
+        self.assertEqual(bpmdetect.detect(np.zeros((rate * 3, 2), np.float32), rate), [])
+        noise = np.random.default_rng(4).normal(0, 0.1, (rate * 20, 2)).astype("float32")
+        for t in bpmdetect.detect(noise, rate):
+            self.assertLess(t.confidence, 0.5)               # noise has no clear beat
+
+    def test_cancel(self):
+        self.assertEqual(bpmdetect.detect(_click_track(120.0, 0.0), 22050, cancel=lambda: True), [])
+
+    def test_beats_per_bar_decides_the_first_beat_guess(self):
+        x = _click_track(120.0, 0.0, secs=40.0)
+        three = bpmdetect.detect(x, 22050, beats_per_bar=3)[0]
+        self.assertAlmostEqual(three.bpm, 120.0, delta=0.05)
+        self.assertLess(three.offset, int(3 * 0.5 * 22050) + 1)   # within the first bar of 3 beats
+
+    def test_an_offset_is_never_negative(self):
+        for i in range(4):
+            top = bpmdetect.detect(_click_track(130.0, 0.05 * i, secs=20.0, seed=i), 22050)[0]
+            self.assertGreaterEqual(top.offset, 0)
 
 
 if __name__ == "__main__":
