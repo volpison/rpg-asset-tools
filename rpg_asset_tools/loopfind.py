@@ -109,6 +109,17 @@ def _coarsen(feats: np.ndarray, k: int) -> np.ndarray:
     return np.where(norms > 1e-6, merged / np.maximum(norms, 1e-6), 0.0).astype(np.float32)
 
 
+def _frame_range(sample_range: tuple[int, int], hop: int, n: int) -> tuple[int, int]:
+    """The frames whose start lies inside the sample range (the low end rounds up, the high end down,
+    so a kept point never falls outside the range). A range narrower than one frame (a very coarse
+    grid) gets the frame nearest its middle instead of none."""
+    lo, hi = sample_range
+    a, b = max(0, -(-lo // hop)), min(n - 1, hi // hop)
+    if b < a:
+        a = b = max(0, min(n - 1, round((lo + hi) / 2 / hop)))
+    return a, b
+
+
 def _window_mean(values: np.ndarray, half: int) -> np.ndarray:
     """Mean of `values` over [i - half, i + half]. Near the ends the window is cut, but it always
     counts at least half a window, so a short stretch at the very edge cannot score high."""
@@ -143,8 +154,8 @@ def find_loops(samples: np.ndarray, rate: int, *, min_length: float = 4.0, count
         return []
     sim = feats @ feats.T                                  # frames x frames, cosine similarity
     half = max(2, int(WINDOW_SECONDS * rate / hop))
-    a_lo, a_hi = (0, n - 1) if start_range is None else (max(0, start_range[0] // hop), min(n - 1, start_range[1] // hop))
-    b_lo, b_hi = (0, n - 1) if end_range is None else (max(0, end_range[0] // hop), min(n - 1, end_range[1] // hop))
+    a_lo, a_hi = (0, n - 1) if start_range is None else _frame_range(start_range, hop, n)
+    b_lo, b_hi = (0, n - 1) if end_range is None else _frame_range(end_range, hop, n)
 
     found: list[tuple[float, int, int]] = []              # (score, start frame, length in frames)
     for k, d in enumerate(range(min_d, n - 1)):

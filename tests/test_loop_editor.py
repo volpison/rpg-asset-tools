@@ -1215,6 +1215,20 @@ class TestLongSongs(unittest.TestCase):
         self.assertAlmostEqual(float(np.linalg.norm(out[0])), 1.0, places=5)
         self.assertEqual(float(np.linalg.norm(loopfind._coarsen(np.zeros((8, 4), np.float32), 4))), 0.0)
 
+    def test_kept_point_range_rounds_inward(self):
+        hop = 16384                                        # a 20-minute song at 44.1 kHz
+        lo, hi = loopfind._frame_range((439535, 461585), hop, 10000)
+        self.assertGreaterEqual(lo * hop, 439535)          # never before the range ...
+        self.assertLessEqual(hi * hop, 461585)             # ... nor after it
+        self.assertEqual((lo, hi), (27, 28))
+        self.assertEqual(loopfind._frame_range((0, 100), hop, 10000), (0, 0))
+
+    def test_a_range_narrower_than_a_frame_still_gets_one(self):
+        lo, hi = loopfind._frame_range((20000, 30000), 16384, 10000)   # no frame start lies inside it
+        self.assertEqual(lo, hi)
+        self.assertEqual(lo, 2)                            # the nearest to its middle (25000 / 16384)
+        self.assertEqual(loopfind._frame_range((10**9, 10**9 + 5), 16384, 100), (99, 99))
+
     def test_a_capped_search_still_finds_the_pattern(self):
         song, rate = _pattern_song()
         old = loopfind.MAX_FRAMES

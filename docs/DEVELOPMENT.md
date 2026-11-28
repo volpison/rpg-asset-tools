@@ -178,8 +178,9 @@ with a seam score below 0.3 are dropped, and the windows at the file edges count
 a short match at the very edge cannot win. No BPM is needed. It runs in a worker thread with a cancel flag.
 Left out: tempo or key analysis, learning-based methods, crossfading the loop.
 Memory: the matrix is frames x frames of float32, so it is capped at `MAX_FRAMES` (4000, 64 MB): a longer song
-has `coarse_factor` neighbouring frames averaged into one (`_coarsen`, hop times k), so a 20-minute song uses
-about 68 MB instead of about 670 MB. `waveform.build_pyramid` folds the channels and builds the first level in
+has `coarse_factor` neighbouring frames averaged into one (`_coarsen`, hop times k), so the matrix of a 20-minute song is
+64 MB instead of about 670 MB. Whole search, measured with `tracemalloc` on a 20-minute stereo 44.1 kHz song: about
+281 MB on top of the song (the mono mix-down alone is about 212 MB; a mono input peaks near 68 MB). `waveform.build_pyramid` folds the channels and builds the first level in
 chunks of `CHUNK` frames (the result is identical to the all-at-once build, tested), so only the finished
 ~2 MB pyramid is kept. The decoded song itself (float32, about 423 MB for 20 minutes) is still whole in memory.
 
