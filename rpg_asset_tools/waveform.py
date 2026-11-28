@@ -15,6 +15,7 @@ import numpy as np
 
 BASE = 64          # samples per bucket on the finest level
 FACTOR = 4         # each further level is this many times coarser
+CHUNK = BASE * 16384   # frames folded at a time while building (about 1M: a few MB of temporaries)
 
 
 @dataclass
@@ -34,13 +35,24 @@ def build_pyramid(samples: np.ndarray) -> Pyramid:
     if samples.ndim == 1:
         samples = samples[:, None]
     n = samples.shape[0]
-    lo = samples.min(axis=1) if samples.shape[1] > 1 else samples[:, 0]
-    hi = samples.max(axis=1) if samples.shape[1] > 1 else samples[:, 0]
+    # The first level is built in chunks (a multiple of BASE frames each), so the temporary
+    # min/max of a whole long song never exists at once: the extra memory is one chunk.
+    parts_lo: list[np.ndarray] = []
+    parts_hi: list[np.ndarray] = []
+    for a in range(0, n, CHUNK):
+        part = samples[a:a + CHUNK]
+        lo = part.min(axis=1) if part.shape[1] > 1 else part[:, 0]
+        hi = part.max(axis=1) if part.shape[1] > 1 else part[:, 0]
+        r_lo, r_hi = _reduce(lo, hi, BASE)
+        parts_lo.append(r_lo)
+        parts_hi.append(r_hi)
+    first_lo = np.concatenate(parts_lo) if parts_lo else np.zeros(0, np.float32)
+    first_hi = np.concatenate(parts_hi) if parts_hi else np.zeros(0, np.float32)
     sizes: list[int] = []
     mins: list[np.ndarray] = []
     maxs: list[np.ndarray] = []
     size = BASE
-    cur_lo, cur_hi = _reduce(lo, hi, BASE)
+    cur_lo, cur_hi = first_lo, first_hi
     while True:
         sizes.append(size)
         mins.append(cur_lo)

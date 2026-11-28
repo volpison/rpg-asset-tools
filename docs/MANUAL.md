@@ -322,7 +322,9 @@ but it works best on music with a clear beat or a repeating pattern.
 
 * Choose *Find start and end*, or keep the current start (or end) and look for the other point only (within a
   quarter of a second of where it is now), and set the *Shortest loop*. Press *Search*; it runs in the
-  background and takes a few seconds for a long song.
+  background and takes a few seconds for a long song. A song longer than about 6 minutes is compared in a
+  coarser way to save memory (the window says so); the points are still refined to the exact sample, but
+  the search may miss a very short repeat.
 * The table lists up to 8 suggestions, best first, with the start, the end, the length (also in bars when the
   song has a beat grid) and a *Match* percentage: how alike the music, and the waveform right at the jump, are.
 * **Use** puts the chosen points in the editor (nothing is saved until *Save tags...*; *Revert* undoes it).

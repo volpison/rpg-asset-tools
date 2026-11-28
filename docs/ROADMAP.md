@@ -15,8 +15,8 @@ the order can change, and each item becomes its own pull request. The *why* of f
 3. **Memory for very long songs.** The song is decoded whole to 32-bit float: about 64 MB for 3 minutes, 423 MB for
    20 minutes of stereo at 44.1 kHz. The finished waveform data is small (about 2 MB), but building it needs a
    temporary extra of about 0.85 times the song, and *Suggest loops* grows with the square of the length (about
-   44 MB at 5 minutes, about 670 MB estimated at 20 minutes). Planned: build the waveform in chunks, cap the
-   similarity matrix for long songs (coarser frames), and say so plainly when a file is very long. Storing the
+   44 MB at 5 minutes, about 670 MB estimated at 20 minutes). Done: the waveform is built in chunks, the
+   similarity matrix is capped (coarser frames for songs over about 6 minutes) and the Suggest window says so. Storing the
    song as 16-bit would halve its memory but is not needed yet. Closing the window already frees everything.
 4. **BPM finder:** tap tempo, and tempo detection from the audio. Later: a grid per section for songs that change
    tempo.

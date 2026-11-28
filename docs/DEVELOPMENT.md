@@ -177,6 +177,12 @@ cross-correlation and a seam score (waveform match just after and just before th
 with a seam score below 0.3 are dropped, and the windows at the file edges count at least half a window so
 a short match at the very edge cannot win. No BPM is needed. It runs in a worker thread with a cancel flag.
 Left out: tempo or key analysis, learning-based methods, crossfading the loop.
+Memory: the matrix is frames x frames of float32, so it is capped at `MAX_FRAMES` (4000, 64 MB): a longer song
+has `coarse_factor` neighbouring frames averaged into one (`_coarsen`, hop times k), so the matrix of a 20-minute song is
+64 MB instead of about 670 MB. Whole search, measured with `tracemalloc` on a 20-minute stereo 44.1 kHz song: about
+281 MB on top of the song (the mono mix-down alone is about 212 MB; a mono input peaks near 68 MB). `waveform.build_pyramid` folds the channels and builds the first level in
+chunks of `CHUNK` frames (the result is identical to the all-at-once build, tested), so only the finished
+~2 MB pyramid is kept. The decoded song itself (float32, about 423 MB for 20 minutes) is still whole in memory.
 
 **Loop editor: seam view is a timeline remap, not a second widget.** In seam view the waveform's timeline is
 the file up to the loop end followed by the loop's beginning (`loopmath.seam_source`, `seam_extent`,

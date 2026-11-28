@@ -32,6 +32,7 @@ BANDS = 32
 TARGET_RATE = 11025             # the song is reduced to about this rate for the comparison
 WINDOW_SECONDS = 2.0            # half-width of the averaging window along a diagonal
 MIN_SEAM = 0.3                  # candidates whose jump is plainly audible are not offered
+MAX_FRAMES = 4000               # the similarity matrix is at most this many frames square (64 MB)
 REFINE = 4096                   # samples compared when refining an end point (full rate)
 
 
@@ -89,6 +90,36 @@ def frame_features(mono: np.ndarray, rate: int) -> tuple[np.ndarray, int]:
     return feats.astype(np.float32), HOP * factor
 
 
+def coarse_factor(total_samples: int, rate: int) -> int:
+    """How many analysis frames are merged into one so that a long song stays within MAX_FRAMES
+    (1 = not at all). The matrix grows with the square of the song's length, so without this a
+    20-minute song would need about 670 MB."""
+    factor = max(1, int(round(rate / TARGET_RATE)))
+    n = max(0, (total_samples // factor - FRAME) // HOP + 1)
+    return max(1, -(-n // MAX_FRAMES))
+
+
+def _coarsen(feats: np.ndarray, k: int) -> np.ndarray:
+    """Average every k frames and make them unit vectors again (silent ones stay zero)."""
+    if k <= 1 or len(feats) == 0:
+        return feats
+    n = (len(feats) // k) * k
+    merged = feats[:n].reshape(-1, k, feats.shape[1]).mean(axis=1)
+    norms = np.linalg.norm(merged, axis=1, keepdims=True)
+    return np.where(norms > 1e-6, merged / np.maximum(norms, 1e-6), 0.0).astype(np.float32)
+
+
+def _frame_range(sample_range: tuple[int, int], hop: int, n: int) -> tuple[int, int]:
+    """The frames whose start lies inside the sample range (the low end rounds up, the high end down,
+    so a kept point never falls outside the range). A range narrower than one frame (a very coarse
+    grid) gets the frame nearest its middle instead of none."""
+    lo, hi = sample_range
+    a, b = max(0, -(-lo // hop)), min(n - 1, hi // hop)
+    if b < a:
+        a = b = max(0, min(n - 1, round((lo + hi) / 2 / hop)))
+    return a, b
+
+
 def _window_mean(values: np.ndarray, half: int) -> np.ndarray:
     """Mean of `values` over [i - half, i + half]. Near the ends the window is cut, but it always
     counts at least half a window, so a short stretch at the very edge cannot score high."""
@@ -112,6 +143,9 @@ def find_loops(samples: np.ndarray, rate: int, *, min_length: float = 4.0, count
     mono = _mono(samples)
     total = len(mono)
     feats, hop = frame_features(mono, rate)
+    k = coarse_factor(total, rate)                         # a long song is compared more coarsely
+    if k > 1:
+        feats, hop = _coarsen(feats, k), hop * k
     n = len(feats)
     if n < 8:
         return []
@@ -120,8 +154,8 @@ def find_loops(samples: np.ndarray, rate: int, *, min_length: float = 4.0, count
         return []
     sim = feats @ feats.T                                  # frames x frames, cosine similarity
     half = max(2, int(WINDOW_SECONDS * rate / hop))
-    a_lo, a_hi = (0, n - 1) if start_range is None else (max(0, start_range[0] // hop), min(n - 1, start_range[1] // hop))
-    b_lo, b_hi = (0, n - 1) if end_range is None else (max(0, end_range[0] // hop), min(n - 1, end_range[1] // hop))
+    a_lo, a_hi = (0, n - 1) if start_range is None else _frame_range(start_range, hop, n)
+    b_lo, b_hi = (0, n - 1) if end_range is None else _frame_range(end_range, hop, n)
 
     found: list[tuple[float, int, int]] = []              # (score, start frame, length in frames)
     for k, d in enumerate(range(min_d, n - 1)):
