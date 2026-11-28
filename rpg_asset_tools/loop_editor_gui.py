@@ -1136,13 +1136,21 @@ class LoopEditorDialog(QDialog):
         import bpm_finder_gui
         if self._bpmf is not None:
             self._bpmf.close()
-        part = None
-        if self._loop.status != loopmath.NONE or self._edit is not None:
-            part = self._current_or_whole()
         self._bpmf = bpm_finder_gui.BpmFinderDialog(
-            self, self._audio.samples, self._audio.sample_rate, part, self.spin_bpb.value(), self._use_bpm)
+            self, self._audio.samples, self._audio.sample_rate, self._loop_part_now, self.spin_bpb.value(),
+            self._use_bpm, self._heard_rate)
         self._bpmf.show()
         return self._bpmf
+
+    def _loop_part_now(self):
+        """The loop's (start, end) as it is now, or None for a file without a loop."""
+        if self._audio is None or (self._loop.status == loopmath.NONE and self._edit is None):
+            return None
+        return self._current_or_whole()
+
+    def _heard_rate(self) -> float:
+        """The speed of what the user hears now: the pitch setting while the editor plays, else normal."""
+        return self._run_rate if self.is_playing() else 1.0
 
     def _use_bpm(self, bpm: float, offset) -> None:
         """The BPM finder's choice: set the tempo (and the first beat when it is given)."""

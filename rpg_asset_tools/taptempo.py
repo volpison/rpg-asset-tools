@@ -17,6 +17,12 @@ KEEP = 16              # only the latest taps count, so a tempo change is follow
 MIN_TAPS = 3           # three taps (two intervals) before a tempo is shown
 
 
+def source_bpm(tapped_bpm: float, playback_rate: float = 1.0) -> float:
+    """The song's own tempo from a tapped one. The user taps what they hear: when the editor plays at a
+    changed pitch (playback rate 0.5 = half speed) the heard tempo is rate times the song's tempo."""
+    return tapped_bpm / playback_rate if playback_rate > 0 else tapped_bpm
+
+
 class TapTempo:
     def __init__(self):
         self._taps: list[float] = []

@@ -280,12 +280,15 @@ beat grid of the window (nothing is written to the audio file).
 * **Detect** listens to the song and lists the most likely tempi, best first, with a *Sure* percentage and a guess
   of the first beat of a bar. Tick *Only the loop part* to listen only between the loop markers (for a song whose
   intro has another tempo). **Use tempo and first beat** sets both; **Use tempo only** keeps your first beat.
-  The tempo is usually right to within 0.01 BPM, but computers confuse a tempo with its half or double, so the list
-  also offers those: turn on the metronome and pick the row that feels right. Which beat is "beat 1" is only a
+  The method can resolve about 0.01 BPM and was checked on generated click tracks (within 0.05 BPM); how close
+  it gets on real songs has not been measured, so always check it. Computers also confuse a tempo with its half
+  or double, so the list offers those: use a row, turn on the metronome (it needs a beat grid, so use a row
+  first) and, if it feels wrong, use another row. Which beat is "beat 1" is only a
   guess: if the bar lines are on the wrong beat, put the cursor on the right one and press *First beat = cursor*.
   Ambient music, very short songs and songs whose tempo changes cannot be measured; then tap it or type it.
 * **Tap** the button in time with the music (click, or the space bar while the button has the focus). Three taps
-  show a tempo and more taps make it steadier; a pause of two seconds starts again. **Use tapped tempo** sets the BPM
+  show a tempo and more taps make it steadier; a pause of two seconds starts again. If the song is playing at
+  a Pitch other than 100, tap what you hear: the result is converted to the song's own tempo. **Use tapped tempo** sets the BPM
   and keeps your first beat.
 
 **Beat grid, metronome and loops in bars**

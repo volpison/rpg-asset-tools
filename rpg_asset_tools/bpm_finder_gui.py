@@ -52,20 +52,28 @@ class _DetectJob(QObject):
             if not self._cancelled:
                 self.failed.emit(f"The detection stopped: {e}")
             return
+        finally:
+            self._args = None          # the song is not kept alive by a finished job
         if not self._cancelled:
             self.done.emit(result)
 
 
 class BpmFinderDialog(QDialog):
-    """`use(bpm, offset)` is called when the user picks a tempo; offset is None to keep the first beat."""
+    """`use(bpm, offset)` is called when the user picks a tempo; offset is None to keep the first beat.
 
-    def __init__(self, parent, samples, rate, loop_part, beats_per_bar, use):
+    `loop_part()` returns the loop's (start, end) *now* (or None when there is no loop), so a loop moved
+    after the window was opened is respected. `playback_rate()` is the speed the editor plays at (the tempo
+    the user hears when tapping is that times the song's tempo)."""
+
+    def __init__(self, parent, samples, rate, loop_part, beats_per_bar, use, playback_rate=lambda: 1.0):
         super().__init__(parent)
         self.setWindowTitle("BPM finder")
         self.resize(560, 470)
         self._samples = samples
         self._rate = rate
-        self._loop_part = loop_part       # (start, end) of the loop, or None when there is no loop
+        self._loop_part = loop_part       # a function: the loop's (start, end) now, or None when there is no loop
+        self._playback_rate = playback_rate
+        self._tap_rate = 1.0
         self._bpb = beats_per_bar
         self._use = use
         self._job = None
@@ -84,9 +92,8 @@ class BpmFinderDialog(QDialog):
 
         opts = QHBoxLayout()
         self.chk_loop_only = QCheckBox("Only the loop part")
-        self.chk_loop_only.setToolTip("Listen only to the part between the loop markers (for a song whose "
-                                      "intro has another tempo).")
-        self.chk_loop_only.setEnabled(loop_part is not None)
+        self.chk_loop_only.setToolTip("Listen only to the part between the loop markers as they are when you "
+                                      "press Detect (for a song whose intro has another tempo).")
         opts.addWidget(self.chk_loop_only)
         self.btn_detect = QPushButton("Detect")
         self.btn_detect.clicked.connect(lambda _c=False: self.detect())
@@ -121,7 +128,7 @@ class BpmFinderDialog(QDialog):
         lay.addLayout(row)
 
         line = QFrame()
-        line.setFrameShape(QFrame.HLine)
+        line.setFrameShape(QFrame.Shape.HLine)
         lay.addWidget(line)
 
         tap = QHBoxLayout()
@@ -153,12 +160,17 @@ class BpmFinderDialog(QDialog):
 
     # ----- detecting
     def detect(self) -> None:
-        if self.searching:
+        if self.searching or self._samples is None:
             return
         self._stop_job()
         first, last = 0, int(self._samples.shape[0])
-        if self.chk_loop_only.isChecked() and self._loop_part is not None:
-            first, last = self._loop_part
+        if self.chk_loop_only.isChecked():
+            part = self._loop_part()
+            if part is None:
+                self.status.setText("There is no loop yet. Set the loop markers first, or untick "
+                                    "'Only the loop part'.")
+                return
+            first, last = part
         self.searching = True
         self.btn_detect.setEnabled(False)
         self.table.setRowCount(0)
@@ -206,13 +218,20 @@ class BpmFinderDialog(QDialog):
 
     # ----- tapping
     def tap(self, now: float | None = None) -> None:
-        bpm = self._tapper.tap(time.monotonic() if now is None else now)
-        self.tapped_bpm = bpm
+        rate = self._playback_rate()
+        if rate != self._tap_rate:                  # the speed changed: the taps so far mean something else
+            self._tapper.reset()
+            self._tap_rate = rate
+        heard = self._tapper.tap(time.monotonic() if now is None else now)
         n = self._tapper.count
-        if bpm is None:
+        self.tapped_bpm = None if heard is None else taptempo.source_bpm(heard, rate)
+        if heard is None:
             self.lbl_tap.setText("Keep tapping..." if n else "Tap in time with the music.")
+        elif rate == 1.0:
+            self.lbl_tap.setText(f"{heard:.1f} BPM  ({n} taps)")
         else:
-            self.lbl_tap.setText(f"{bpm:.1f} BPM  ({n} taps)")
+            self.lbl_tap.setText(f"{self.tapped_bpm:.1f} BPM in the song  ({n} taps; you tapped {heard:.1f} "
+                                 f"while it plays at {round(rate * 100)} % speed)")
         self._update_buttons()
 
     def reset_taps(self) -> None:
@@ -250,4 +269,5 @@ class BpmFinderDialog(QDialog):
     def done(self, result: int) -> None:
         self._stop_job()
         self.searching = False
+        self._samples = None              # a closed window is only hidden: do not keep the song in memory
         super().done(result)

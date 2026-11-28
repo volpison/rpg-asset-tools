@@ -1290,6 +1290,12 @@ class TestTapTempo(unittest.TestCase):
         self.assertEqual(t.count, 0)
         self.assertIsNone(t.bpm)
 
+    def test_source_tempo_from_the_heard_one(self):
+        self.assertAlmostEqual(taptempo.source_bpm(120.0), 120.0)
+        self.assertAlmostEqual(taptempo.source_bpm(60.0, 0.5), 120.0)     # pitch 50: half speed
+        self.assertAlmostEqual(taptempo.source_bpm(180.0, 1.5), 120.0)    # pitch 150
+        self.assertAlmostEqual(taptempo.source_bpm(100.0, 0.0), 100.0)    # a nonsense rate changes nothing
+
     def test_a_clock_going_backwards_does_not_break_it(self):
         t = taptempo.TapTempo()
         t.tap(5.0)
