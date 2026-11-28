@@ -570,6 +570,7 @@ class LoopEditorDialog(QDialog):
                                                  self._tags.length or 0)
         self._audio = None
         self._suggest = None
+        self._bpmf = None
         self._loop = None
         self._sink = None
         self._io = None
@@ -823,8 +824,12 @@ class LoopEditorDialog(QDialog):
         self.btn_bpm_from_loop.clicked.connect(lambda _c=False: self._bpm_from_loop())
         bars.addWidget(self.btn_bpm_from_loop)
         bars.addStretch(1)
+        self.btn_bpmfinder = QPushButton("BPM finder...")
+        self.btn_bpmfinder.setToolTip("Find the tempo: detect it from the audio, or tap it in time with the music.")
+        self.btn_bpmfinder.clicked.connect(lambda _c=False: self.bpm_finder())
         bars.insertWidget(0, self.btn_suggest)
-        bars.insertSpacing(1, 24)
+        bars.insertWidget(1, self.btn_bpmfinder)
+        bars.insertSpacing(2, 24)
         tools.addLayout(bars)
         lay.addWidget(self._box("Tools", tools))
 
@@ -894,7 +899,7 @@ class LoopEditorDialog(QDialog):
     def _set_controls_enabled(self, on: bool) -> None:
         for wdg in (self.btn_play, self.btn_stop, self.btn_from_loop, self.btn_seam,
                     self.chk_loop, self.volume, self.scroll, *self.zoom_btns,
-                    self.btn_set_start, self.btn_set_end, self.btn_suggest, self.chk_snap, self.chk_seamview, *self.ed.values(),
+                    self.btn_set_start, self.btn_set_end, self.btn_suggest, self.btn_bpmfinder, self.chk_snap, self.chk_seamview, *self.ed.values(),
                     self.chk_grid, self.ed_bpm, self.ed_offset, self.btn_offset_cursor, self.spin_bpb,
                     self.cmb_gridsnap, self.spin_bars, self.btn_bars, self.btn_bpm_from_loop):
             wdg.setEnabled(on)
@@ -1123,6 +1128,47 @@ class LoopEditorDialog(QDialog):
             self._use_suggestion)
         self._suggest.show()
         return self._suggest
+
+    def bpm_finder(self):
+        """Open the window that finds the tempo; returns it (None if the song is not ready)."""
+        if not self.ready:
+            return None
+        import bpm_finder_gui
+        if self._bpmf is not None:
+            self._bpmf.close()
+        self._bpmf = bpm_finder_gui.BpmFinderDialog(
+            self, self._audio.samples, self._audio.sample_rate, self._loop_part_now, self.spin_bpb.value(),
+            self._use_bpm, self._heard_rate)
+        self._bpmf.show()
+        return self._bpmf
+
+    def _loop_part_now(self):
+        """The loop's (start, end) as it is now, or None for a file without a loop."""
+        if self._audio is None or (self._loop.status == loopmath.NONE and self._edit is None):
+            return None
+        return self._current_or_whole()
+
+    def _heard_rate(self) -> float:
+        """The speed of what the user hears now: the pitch setting while the editor plays, else normal."""
+        return self._run_rate if self.is_playing() else 1.0
+
+    def _use_bpm(self, bpm: float, offset) -> None:
+        """The BPM finder's choice: set the tempo (and the first beat when it is given)."""
+        if not self.ready:
+            return
+        if offset is None:
+            offset = self._grid.offset if self._grid is not None else 0
+        try:
+            grid = beatgrid.Grid(round(bpm, 3), int(offset), self.spin_bpb.value())
+        except beatgrid.GridError as ex:
+            self._problem(str(ex))
+            return
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setText(f"Tempo set to {grid.bpm:g} BPM. Turn on the metronome to check it. If the bar lines "
+                          "fall on the wrong beat, put the cursor on the first beat of a bar and press "
+                          "'First beat = cursor'.")
+        self.chk_grid.setChecked(True)
+        self.set_grid(grid)
 
     def _use_suggestion(self, start: int, end: int, hear: bool) -> None:
         if self.set_loop_points(start, end) and hear:
@@ -1600,6 +1646,9 @@ class LoopEditorDialog(QDialog):
         if self._suggest is not None:
             self._suggest.close()
             self._suggest = None
+        if self._bpmf is not None:
+            self._bpmf.close()
+            self._bpmf = None
         self._stop_sink()
         self.ready = False
         self._metro = None

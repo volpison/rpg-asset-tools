@@ -56,6 +56,8 @@ class _SearchJob(QObject):
             if not self._cancelled:
                 self.failed.emit(f"The search stopped: {e}")
             return
+        finally:
+            self._samples = None       # the song is not kept alive by a finished job
         if not self._cancelled:
             self.done.emit(result)
 
@@ -142,7 +144,7 @@ class SuggestDialog(QDialog):
         return opts
 
     def search(self) -> None:
-        if self.searching:
+        if self.searching or self._samples is None:
             return
         self._stop_job()
         self.searching = True
@@ -224,4 +226,5 @@ class SuggestDialog(QDialog):
     def done(self, result: int) -> None:
         self._stop_job()
         self.searching = False
+        self._samples = None              # a closed window is only hidden: do not keep the song in memory
         super().done(result)
